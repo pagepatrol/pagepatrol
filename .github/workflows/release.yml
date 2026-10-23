@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted publishing: PyPI accepts this workflow's OIDC token instead of an API token.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check the tag matches the package version
+        run: |
+          version="v$(uv version --short)"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match pyproject version $version"
+            exit 1
+          fi
+
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest
+      - run: uv build
+      - run: uv publish --trusted-publishing always

@@ -16,6 +16,7 @@ below. LLM-driven scenario testing with your own key is on the way.
 ## Quick start
 
 ```sh
+uv tool install pagepatrol            # or: pipx install pagepatrol
 pagepatrol install                    # one-time: download Chromium
 pagepatrol check https://example.com
 pagepatrol check ./site/index.html --open
