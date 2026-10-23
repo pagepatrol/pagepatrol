@@ -1,0 +1,168 @@
+{% macro finding(f) %}
+<div class="finding {{ f.severity.value }}"{% if f.marker %} data-y="{{ f.rect.y | round | int }}" title="Show on screenshot"{% endif %}>
+  <div class="head">
+    {% if f.marker %}<span class="marker">{{ f.marker }}</span>{% endif %}
+    <strong>{{ f.message }}</strong>
+  </div>
+  {% if f.selector %}<div class="meta"><code>{{ f.selector }}</code></div>{% endif %}
+  {% if f.details.other %}<div class="meta">and <code>{{ f.details.other }}</code></div>{% endif %}
+  {% if f.details.url %}<div class="meta"><code>{{ f.details.url }}</code></div>{% endif %}
+  {% if f.details.href %}<div class="meta"><code>{{ f.details.href }}</code></div>{% endif %}
+  {% if f.details.src %}<div class="meta"><code>{{ f.details.src }}</code></div>{% endif %}
+  {% if f.details.help_url %}<div class="meta"><a href="{{ f.details.help_url }}" target="_blank" rel="noopener">{{ f.details.rule }}</a>{% if f.details.total_nodes > 1 %} &middot; {{ f.details.total_nodes }} elements on the page{% endif %}</div>{% endif %}
+</div>
+{% endmacro %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PagePatrol report · {{ report.results[0].page_title or report.target }}</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #fff; --text: #1a1a1a; --muted: #666; --border: #e3e3e3;
+    --error: #d93036; --warning: #b86e00; --info: #2f6fd6;
+    --error-bg: #fdecec; --warning-bg: #fdf3e1; --info-bg: #e9f1fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111; --surface: #1a1a1a; --text: #ececec; --muted: #999; --border: #2c2c2c;
+      --error: #ff6b6f; --warning: #f5b947; --info: #79a8ff;
+      --error-bg: #3a1b1c; --warning-bg: #3a2d14; --info-bg: #1a2a45;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); word-break: break-all; }
+  .totals { display: flex; gap: 12px; margin: 20px 0 28px; flex-wrap: wrap; }
+  .total { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; min-width: 110px; }
+  .total b { display: block; font-size: 24px; }
+  .total.error b { color: var(--error); } .total.warning b { color: var(--warning); } .total.info b { color: var(--info); }
+  nav { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  nav a { padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; color: inherit; text-decoration: none; background: var(--surface); }
+  section.viewport { margin-bottom: 48px; }
+  section.viewport > h2 { font-size: 18px; margin: 0 0 12px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .shot { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .shot img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .shot-toggle { display: flex; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; position: sticky; top: 0; background: var(--surface); }
+  .findings { display: flex; flex-direction: column; gap: 20px; }
+  .group { display: flex; flex-direction: column; gap: 6px; }
+  .group-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+  .group-head .check { font-size: 13px; color: var(--text); }
+  .group-head .count { font-size: 12px; padding: 0 7px; border-radius: 999px; background: var(--border); }
+  .group-head.error .count { background: var(--error-bg); color: var(--error); }
+  .group-head.warning .count { background: var(--warning-bg); color: var(--warning); }
+  .group-head.info .count { background: var(--info-bg); color: var(--info); }
+  .group details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+  .group details .finding { margin-top: 6px; }
+  .finding { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--muted); border-radius: 6px; padding: 10px 12px; }
+  .finding[data-y] { cursor: pointer; }
+  .finding.error { border-left-color: var(--error); } .finding.warning { border-left-color: var(--warning); } .finding.info { border-left-color: var(--info); }
+  .finding .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .marker { font-weight: 600; font-size: 12px; padding: 0 6px; border-radius: 4px; color: #fff; background: var(--muted); }
+  .error .marker { background: var(--error); } .warning .marker { background: var(--warning); } .info .marker { background: var(--info); }
+  .check { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); }
+  .finding code, .console code { font: 12px ui-monospace, Consolas, monospace; word-break: break-all; }
+  .finding .meta { margin-top: 4px; color: var(--muted); font-size: 13px; }
+  .empty { padding: 16px; background: var(--surface); border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); }
+  details.console { margin-top: 16px; }
+  details.console summary { cursor: pointer; color: var(--muted); }
+  .console ul { list-style: none; padding: 0; margin: 8px 0 0; }
+  .console li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .console .error { color: var(--error); } .console .warning { color: var(--warning); }
+  footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{ report.results[0].page_title or "Untitled page" }}</h1>
+    <p>{{ report.url }}</p>
+  </header>
+
+  <div class="totals">
+    <div class="total error"><b>{{ totals.error }}</b>errors</div>
+    <div class="total warning"><b>{{ totals.warning }}</b>warnings</div>
+    <div class="total info"><b>{{ totals.info }}</b>notes</div>
+  </div>
+
+  {% if report.results | length > 1 %}
+  <nav>
+    {% for r in report.results %}
+    <a href="#vp-{{ r.viewport.name }}">{{ r.viewport.name }} · {{ r.findings | length }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  {% for r in report.results %}
+  <section class="viewport" id="vp-{{ r.viewport.name }}">
+    <h2>{{ r.viewport.name }} <span class="check">{{ r.viewport.width }}×{{ r.viewport.height }}</span></h2>
+    <div class="layout">
+      <div class="shot">
+        {% if r.annotated_screenshot %}
+        <div class="shot-toggle">
+          <label><input type="radio" name="shot-{{ loop.index }}" checked onchange="this.closest('.shot').querySelector('img').src='{{ r.annotated_screenshot }}'"> marked</label>
+          <label><input type="radio" name="shot-{{ loop.index }}" onchange="this.closest('.shot').querySelector('img').src='{{ r.screenshot }}'"> clean</label>
+        </div>
+        <img src="{{ r.annotated_screenshot }}" alt="Screenshot at {{ r.viewport.name }} with findings marked" loading="lazy">
+        {% elif r.screenshot %}
+        <img src="{{ r.screenshot }}" alt="Screenshot at {{ r.viewport.name }}" loading="lazy">
+        {% endif %}
+      </div>
+
+      <div>
+        {% if r.findings %}
+        <div class="findings">
+          {% for g in group_by_check(r.findings) %}
+          <div class="group">
+            <div class="group-head {{ g.severity.value }}"><span class="check">{{ g.check }}</span> <span class="count">{{ g.count }}</span></div>
+            {% for f in g.findings[:5] %}{{ finding(f) }}{% endfor %}
+            {% if g.count > 5 %}
+            <details>
+              <summary>{{ g.count - 5 }} more</summary>
+              {% for f in g.findings[5:] %}{{ finding(f) }}{% endfor %}
+            </details>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty">No issues found at this size.</div>
+        {% endif %}
+
+        {% if r.console %}
+        <details class="console">
+          <summary>Console output ({{ r.console | length }})</summary>
+          <ul>
+            {% for m in r.console %}
+            <li class="{{ m.type }}"><code>[{{ m.type }}] {{ m.text }}</code>{% if m.location %} <span class="check">{{ m.location }}</span>{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+
+  <footer>
+    PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
+  </footer>
+</main>
+<script>
+  document.querySelectorAll('.finding[data-y]').forEach((el) => {
+    el.addEventListener('click', (event) => {
+      if (event.target.closest('a')) return;
+      const shot = el.closest('.layout').querySelector('.shot');
+      const img = shot.querySelector('img');
+      const scale = img.clientWidth / img.naturalWidth;
+      shot.scrollTo({ top: Math.max(0, el.dataset.y * scale - 80), behavior: 'smooth' });
+    });
+  });
+</script>
+</body>
+</html>
