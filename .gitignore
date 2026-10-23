@@ -1,0 +1,16 @@
+# Whitelist: everything at the root is ignored unless listed below.
+/*
+!/.gitignore
+!/.gitattributes
+!/.github/
+!/LICENSE
+!/README.md
+!/pyproject.toml
+!/uv.lock
+!/src/
+!/tests/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
