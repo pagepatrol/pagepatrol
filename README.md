@@ -58,13 +58,37 @@ accept images.
 | `balanced` (default) | 4 | medium |
 | `thorough` | 12 | high |
 
-Keys are read from `PAGEPATROL_API_KEY` or the provider's usual variable
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`OPENROUTER_API_KEY`), or from `~/.pagepatrol/credentials.toml` if you paste
-one into `init`. `pagepatrol config` shows what is in use.
-
 Screenshots of the page go to the provider you picked. Use `--no-llm` for
 pages that shouldn't leave your machine, or a local model through Ollama.
+
+## Your API key
+
+PagePatrol has no server. Your key stays on your machine and is only ever
+sent to the provider you chose, by that provider's official SDK.
+
+It looks for a key in this order:
+
+1. `PAGEPATROL_API_KEY`
+2. the provider's usual variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `GEMINI_API_KEY` or `OPENROUTER_API_KEY`
+3. a key you pasted into `pagepatrol init`, kept in your system keyring
+   (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
+
+If `init` finds the key in an environment variable it doesn't store it. On
+systems without a keyring, such as headless Linux, a pasted key goes to
+`~/.pagepatrol/credentials.toml`, readable only by your user.
+`pagepatrol config` shows which source is in use without printing the key.
+
+The key is never written to reports, screenshots or the terminal; a test
+checks this on every change. Pages under test run inside Chromium and can't
+reach it, and the model never sees it either.
+
+What this doesn't protect against: anything that already runs as your user
+can read your keyring and environment, and so could a compromised dependency
+of any tool you run. PagePatrol keeps its dependencies few and is published
+from GitHub Actions through PyPI trusted publishing, with no long-lived token
+that could be stolen. If you find a security problem, please report it
+privately through GitHub's security advisories instead of a public issue.
 
 ## What it checks
 
