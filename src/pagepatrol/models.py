@@ -55,6 +55,17 @@ class ViewportResult(BaseModel):
     findings: list[Finding] = ModelField(default_factory=list)
     console: list[ConsoleMessage] = ModelField(default_factory=list)
     page_title: str | None = None
+    review_summary: str | None = None
+    review_error: str | None = None
+
+
+class LLMRun(BaseModel):
+    provider: str
+    model: str
+    depth: str
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class CheckReport(BaseModel):
@@ -64,6 +75,7 @@ class CheckReport(BaseModel):
     started_at: datetime
     duration_s: float
     results: list[ViewportResult]
+    llm: LLMRun | None = None
 
     def all_findings(self) -> list[Finding]:
         return [f for r in self.results for f in r.findings]

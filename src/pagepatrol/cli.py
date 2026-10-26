@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import webbrowser
@@ -11,6 +12,7 @@ from rich.table import Table
 
 from pagepatrol import __version__
 from pagepatrol.models import CheckReport, Severity, group_findings
+from pagepatrol.review import Depth
 from pagepatrol.targets import TargetError, parse_viewport
 
 app = typer.Typer(
@@ -74,6 +76,16 @@ def check(
     open_report: bool = typer.Option(
         False, "--open", help="Open the report in a browser when done."
     ),
+    llm: bool | None = typer.Option(
+        None,
+        "--llm/--no-llm",
+        help="AI review of the screenshots. On by default once `pagepatrol init` is done.",
+    ),
+    depth: Depth = typer.Option(
+        Depth.BALANCED,
+        "--depth",
+        help="How much of the page the AI looks at, and how hard it thinks.",
+    ),
 ) -> None:
     """Check a single page for layout, readability, accessibility and runtime problems."""
     from pagepatrol.check import BrowserNotInstalled, CheckOptions, PageLoadError, run_check
@@ -90,7 +102,10 @@ def check(
         out_dir=out_dir,
         check_links=links,
         external_links=external_links,
+        depth=depth,
     )
+    if llm is not False:
+        options.llm, options.llm_provider = _llm_client(required=llm is True)
 
     try:
         with console.status(f"Checking {target}..."):
@@ -110,6 +125,179 @@ def check(
     )
     if threshold is not None and any(f.severity.rank >= threshold for f in report.all_findings()):
         raise typer.Exit(1)
+
+
+def _llm_client(required: bool):
+    from pagepatrol.config import load_llm_config
+    from pagepatrol.llm import create_client
+    from pagepatrol.llm.providers import LLMNotConfigured
+
+    config = load_llm_config()
+    if config is None:
+        if required:
+            console.print("[red]No AI model set up yet. Run: pagepatrol init[/red]")
+            raise typer.Exit(2)
+        console.print(
+            "[dim]Tip: run `pagepatrol init` to add an AI review of the screenshots.[/dim]"
+        )
+        return None, None
+    try:
+        return create_client(config), config.provider
+    except LLMNotConfigured as exc:
+        if required:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
+        console.print(f"[yellow]Skipping AI review: {exc}[/yellow]")
+        return None, None
+
+
+@app.command()
+def init() -> None:
+    """Pick the AI provider and model used to review screenshots. Optional."""
+    import asyncio
+
+    from pagepatrol.config import LLMConfig, save_key, save_llm_config
+    from pagepatrol.llm import LLMError, create_client
+    from pagepatrol.llm.providers import PROVIDERS
+
+    console.print(
+        "PagePatrol works without an AI model. Adding one lets it look at the screenshots\n"
+        "the way a tester would. Your key stays on this machine.\n"
+    )
+    providers = list(PROVIDERS.values())
+    for i, p in enumerate(providers, 1):
+        console.print(f"  {i}. {p.label}")
+    choice = typer.prompt("\nProvider", default="1")
+    if not choice.isdigit() or not 1 <= int(choice) <= len(providers):
+        raise typer.BadParameter(f"Pick a number from 1 to {len(providers)}.")
+    provider = providers[int(choice) - 1]
+
+    base_url = None
+    if provider.id == "custom":
+        base_url = typer.prompt("Server URL (OpenAI-compatible, e.g. http://localhost:1234/v1)")
+    elif provider.id == "ollama":
+        base_url = typer.prompt("Ollama URL", default=provider.base_url)
+
+    key, store_key = None, False
+    env_names = [n for n in ("PAGEPATROL_API_KEY", provider.key_env) if n]
+    from_env = next((n for n in env_names if os.environ.get(n)), None)
+    if from_env:
+        console.print(f"Using the key in ${from_env}.")
+        key = os.environ[from_env]
+    elif provider.needs_key or provider.id == "custom":
+        hint = "" if provider.needs_key else " (leave empty if none)"
+        key = (
+            typer.prompt(
+                "API key" + hint,
+                default=None if provider.needs_key else "",
+                hide_input=True,
+                show_default=False,
+            ).strip()
+            or None
+        )
+        store_key = key is not None
+
+    probe = create_client(LLMConfig(provider.id, model="", base_url=base_url), api_key=key)
+    models: list[str] = []
+    try:
+        with console.status("Fetching models..."):
+            models = asyncio.run(probe.list_models())
+    except LLMError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+
+    shown = models if len(models) <= 30 else []
+    for i, m in enumerate(shown, 1):
+        console.print(f"  {i}. {m}")
+    if models and not shown:
+        console.print(f"{len(models)} models available. Type the id of the one you want.")
+    default_model = provider.suggested_model if provider.suggested_model in models else None
+    default_model = default_model or (shown[0] if shown else None)
+    answer = typer.prompt("Model (number or id)", default=default_model).strip()
+    if answer.isdigit() and 1 <= int(answer) <= len(shown):
+        answer = shown[int(answer) - 1]
+
+    config = LLMConfig(provider.id, model=answer, base_url=base_url)
+    client = create_client(config, api_key=key)
+    with console.status(f"Testing {answer} with an image..."):
+        ok, message = asyncio.run(_vision_probe(client))
+    console.print(("[green]" if ok else "[yellow]") + message + "[/]")
+    if not ok and not typer.confirm("Save this setup anyway?", default=False):
+        raise typer.Exit(1)
+
+    path = save_llm_config(config)
+    if store_key and key:
+        console.print(f"Key saved to {save_key(provider.id, key)}")
+    console.print(f"Saved to {path}. `pagepatrol check` will now include an AI review.")
+
+
+async def _vision_probe(client) -> tuple[bool, str]:
+    from pagepatrol.llm import Image, LLMError, Request
+
+    request = Request(
+        system="You answer briefly.",
+        text="What is the main color of the image above? Answer with one lowercase word.",
+        images=[Image(png=_solid_png(32, 32, (220, 30, 30)), label="Image:")],
+        schema={
+            "type": "object",
+            "properties": {"color": {"type": "string"}},
+            "required": ["color"],
+            "additionalProperties": False,
+        },
+        schema_name="color",
+        effort="low",
+        max_tokens=2000,
+    )
+    try:
+        data = await client.complete_json(request)
+    except LLMError as exc:
+        return False, f"Test failed: {exc}"
+    color = str(data.get("color", "")).lower()
+    if "red" in color:
+        return True, "Works, and the model can see images."
+    return False, f"The model answered but didn't see the image correctly (said {color!r})."
+
+
+def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    row = b"\x00" + bytes(rgb) * width
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(row * height))
+        + chunk(b"IEND", b"")
+    )
+
+
+@app.command("config")
+def show_config() -> None:
+    """Show the AI model setup."""
+    from pagepatrol.config import config_dir, load_llm_config, load_saved_key
+    from pagepatrol.llm.providers import PROVIDERS
+
+    config = load_llm_config()
+    if config is None:
+        console.print("No AI model set up. Checks run without one; `pagepatrol init` adds one.")
+        return
+    provider = PROVIDERS.get(config.provider)
+    console.print(f"provider  {config.provider}")
+    console.print(f"model     {config.model}")
+    if config.base_url:
+        console.print(f"base url  {config.base_url}")
+    env_names = ["PAGEPATROL_API_KEY", provider.key_env if provider else None]
+    env = next((n for n in env_names if n and os.environ.get(n)), None)
+    if env:
+        console.print(f"key       from ${env}")
+    elif load_saved_key(config.provider):
+        console.print(f"key       saved in {config_dir() / 'credentials.toml'}")
+    else:
+        console.print("key       none")
 
 
 @app.command()
@@ -132,6 +320,17 @@ def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
         counts = {s: sum(1 for f in result.findings if f.severity == s) for s in Severity}
         parts = [f"[{SEVERITY_STYLE[s]}]{counts[s]} {s.value}[/]" for s in Severity]
         console.print(f"[bold]{vp.name:<8}[/bold] {vp.width}x{vp.height:<6} " + "  ".join(parts))
+
+    if report.llm:
+        llm = report.llm
+        console.print(
+            f"[dim]AI review: {llm.model} ({llm.depth}), {llm.calls} call(s), "
+            f"{llm.input_tokens:,} in / {llm.output_tokens:,} out tokens[/dim]"
+        )
+        for result in report.results:
+            if result.review_error:
+                name = result.viewport.name
+                console.print(f"[yellow]AI review failed on {name}: {result.review_error}[/]")
 
     groups = group_findings(report)
     if not groups:

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -14,14 +15,17 @@ from pagepatrol.checks import install_helpers, load_js
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
 from pagepatrol.checks.links import check_links
+from pagepatrol.llm import Client
 from pagepatrol.models import (
     CheckReport,
     ConsoleMessage,
     Finding,
+    LLMRun,
     Severity,
     Viewport,
     ViewportResult,
 )
+from pagepatrol.review import DEPTHS, Depth, Tile, review_viewport
 from pagepatrol.targets import resolve_target
 
 NAVIGATION_TIMEOUT_MS = 30_000
@@ -43,6 +47,9 @@ class CheckOptions:
     out_dir: Path
     check_links: bool = True
     external_links: bool = False
+    llm: Client | None = None
+    llm_provider: str | None = None
+    depth: Depth = Depth.BALANCED
 
 
 @dataclass
@@ -150,6 +157,22 @@ async def _open(context: BrowserContext, url: str, runtime: _Runtime) -> Page:
     return page
 
 
+async def _capture_tiles(page: Page, viewport: Viewport, max_tiles: int) -> list[Tile]:
+    # Models downscale very tall images until text is unreadable, so send the
+    # page one screen at a time instead of as one long capture.
+    height = await page.evaluate("document.documentElement.scrollHeight")
+    tiles = []
+    for i in range(min(math.ceil(height / viewport.height), max_tiles)):
+        top = i * viewport.height
+        tile_height = min(viewport.height, height - top)
+        png = await page.screenshot(
+            clip={"x": 0, "y": top, "width": viewport.width, "height": tile_height},
+            full_page=True,
+        )
+        tiles.append(Tile(png=png, top=top, height=tile_height))
+    return tiles
+
+
 def _number_markers(findings: list[Finding]) -> list[dict]:
     markers = []
     for finding in findings:
@@ -186,6 +209,9 @@ async def _check_viewport(
         clean_shot = shots / f"{viewport.name}.png"
         await page.screenshot(path=clean_shot, full_page=True)
         result.screenshot = clean_shot.relative_to(options.out_dir).as_posix()
+        tiles = []
+        if options.llm:
+            tiles = await _capture_tiles(page, viewport, DEPTHS[options.depth].max_tiles)
 
         await install_helpers(page)
         layout = await run_layout_checks(page)
@@ -210,6 +236,15 @@ async def _check_viewport(
         # the network error for the same file.
         broken_images = {f.details.get("src") for f in findings if f.check == "broken-image"}
         findings += [f for f in runtime.findings if f.details.get("url") not in broken_images]
+
+        if options.llm and tiles:
+            new_findings, review = await review_viewport(
+                options.llm, viewport, tiles, findings, options.depth
+            )
+            findings += new_findings
+            result.review_summary = review.summary
+            result.review_error = review.error
+
         findings.sort(key=lambda f: -f.severity.rank)
 
         markers = _number_markers(findings)
@@ -246,6 +281,18 @@ async def _run(target: str, url: str, options: CheckOptions) -> CheckReport:
         finally:
             await browser.close()
 
+    llm_run = None
+    if options.llm:
+        usage = options.llm.usage
+        llm_run = LLMRun(
+            provider=options.llm_provider or "unknown",
+            model=options.llm.model,
+            depth=options.depth.value,
+            calls=usage.calls,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+
     return CheckReport(
         target=target,
         url=url,
@@ -253,6 +300,7 @@ async def _run(target: str, url: str, options: CheckOptions) -> CheckReport:
         started_at=started,
         duration_s=round(time.perf_counter() - t0, 2),
         results=results,
+        llm=llm_run,
     )
 
 

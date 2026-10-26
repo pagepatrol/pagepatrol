@@ -3,12 +3,18 @@
   <div class="head">
     {% if f.marker %}<span class="marker">{{ f.marker }}</span>{% endif %}
     <strong>{{ f.message }}</strong>
+    {% if f.details.source == "llm" %}<span class="ai">AI</span>{% endif %}
   </div>
   {% if f.selector %}<div class="meta"><code>{{ f.selector }}</code></div>{% endif %}
   {% if f.details.other %}<div class="meta">and <code>{{ f.details.other }}</code></div>{% endif %}
   {% if f.details.url %}<div class="meta"><code>{{ f.details.url }}</code></div>{% endif %}
   {% if f.details.href %}<div class="meta"><code>{{ f.details.href }}</code></div>{% endif %}
   {% if f.details.src %}<div class="meta"><code>{{ f.details.src }}</code></div>{% endif %}
+  {% if f.details.review %}
+  <div class="review {{ f.details.review.verdict }}">
+    <span class="ai">AI</span> {{ verdict_labels.get(f.details.review.verdict, f.details.review.verdict) }}{% if f.details.review.reason %}: {{ f.details.review.reason }}{% endif %}
+  </div>
+  {% endif %}
   {% if f.details.help_url %}<div class="meta"><a href="{{ f.details.help_url }}" target="_blank" rel="noopener">{{ f.details.rule }}</a>{% if f.details.total_nodes > 1 %} &middot; {{ f.details.total_nodes }} elements on the page{% endif %}</div>{% endif %}
 </div>
 {% endmacro %}
@@ -75,6 +81,11 @@
   .console li { padding: 4px 0; border-bottom: 1px solid var(--border); }
   .console .error { color: var(--error); } .console .warning { color: var(--warning); }
   footer { color: var(--muted); font-size: 13px; }
+  .ai { display: inline-block; font: 600 10px/16px system-ui, sans-serif; padding: 0 5px; border-radius: 4px; background: var(--info-bg); color: var(--info); letter-spacing: .03em; }
+  .review { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .review.confirmed { color: var(--text); }
+  .summary { margin: 0 0 16px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  .summary.failed { color: var(--warning); }
 </style>
 </head>
 <body>
@@ -115,6 +126,8 @@
       </div>
 
       <div>
+        {% if r.review_summary %}<p class="summary"><span class="ai">AI</span> {{ r.review_summary }}</p>{% endif %}
+        {% if r.review_error %}<p class="summary failed">AI review failed: {{ r.review_error }}</p>{% endif %}
         {% if r.findings %}
         <div class="findings">
           {% for g in group_by_check(r.findings) %}
@@ -150,6 +163,7 @@
   {% endfor %}
 
   <footer>
+    {% if report.llm %}AI review by {{ report.llm.model }} ({{ report.llm.depth }}, {{ "{:,}".format(report.llm.input_tokens) }} in / {{ "{:,}".format(report.llm.output_tokens) }} out tokens) &middot; {% endif %}
     PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
   </footer>
 </main>

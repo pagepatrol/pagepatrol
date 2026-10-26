@@ -12,6 +12,12 @@ def _environment() -> Environment:
         autoescape=select_autoescape(default=True), trim_blocks=True, lstrip_blocks=True
     )
     env.globals["group_by_check"] = group_by_check
+    env.globals["verdict_labels"] = {
+        "confirmed": "confirmed",
+        "intentional": "looks intentional",
+        "false_positive": "false alarm",
+        "unsure": "not sure",
+    }
     return env
 
 
