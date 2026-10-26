@@ -58,6 +58,27 @@ accept images.
 | `balanced` (default) | 4 | medium |
 | `thorough` | 12 | high |
 
+### What it costs
+
+You pay your provider directly; PagePatrol itself is free. Every `check`
+prints how long it took, the tokens used and, when the model's price is
+known, an estimate of the cost. The report shows the same.
+
+Measured on real pages with the default `balanced` depth at phone and
+desktop sizes:
+
+| Page | Claude Sonnet 5.5 | Claude Opus 5.5 | Claude Haiku 5.5 |
+|---|---|---|---|
+| Small page (one screen) | ~$0.015 | ~$0.03 | <$0.001 |
+| Long page (Hacker News, MDN) | ~$0.05 | ~$0.10 | ~$0.003 |
+
+Opus and Haiku figures are scaled from the Sonnet runs by list price, so
+treat them as rough. `--depth quick` looks at fewer screens and costs about
+half; `thorough` looks at up to 12 screens per size and can cost three times
+as much on long pages. Prices for Claude models ship with PagePatrol
+(list prices as of 2026-10); for other providers `init` asks for them, and
+local models through Ollama are free.
+
 Screenshots of the page go to the provider you picked. Use `--no-llm` for
 pages that shouldn't leave your machine, or a local model through Ollama.
 
