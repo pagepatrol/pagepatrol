@@ -8,8 +8,9 @@ cut off, text that is too small or too faint to read, layouts that scroll
 sideways on a phone, broken images and links, JavaScript errors and failed
 requests. Every finding comes with a screenshot that shows where it is.
 
-Everything runs on your machine. No account, no API key needed for the checks
-below. LLM-driven scenario testing with your own key is on the way.
+Everything runs on your machine. The checks need no account and no API key.
+If you want, connect the AI model of your choice and it will look over the
+screenshots too, the way a human tester would.
 
 > **Status:** early development. Expect rough edges and breaking changes.
 
@@ -31,6 +32,39 @@ pagepatrol check localhost:3000 -v mobile -v tablet -v 1440x900
 
 It exits with code 1 when it finds errors, so it can gate a CI job. Use
 `--fail-on warning` to be stricter or `--fail-on never` to only report.
+
+## AI review (optional)
+
+```sh
+pagepatrol init        # pick a provider and model, paste your key
+pagepatrol check https://example.com --depth thorough
+```
+
+With a model set up, every `check` also sends the screenshots and the list of
+findings to it. The model:
+
+- confirms each finding, or marks it as intentional or a false alarm (those
+  drop to notes, with the reason shown in the report)
+- points out visible problems the checks can't measure: text over busy
+  images, broken alignment, placeholder text, error messages on the page
+
+Supported: Anthropic, OpenAI, Google Gemini, OpenRouter, Ollama and any
+OpenAI-compatible server (LM Studio, vLLM and others). The model needs to
+accept images.
+
+| `--depth` | Screens per viewport | Effort |
+|---|---|---|
+| `quick` | 2 | low |
+| `balanced` (default) | 4 | medium |
+| `thorough` | 12 | high |
+
+Keys are read from `PAGEPATROL_API_KEY` or the provider's usual variable
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`OPENROUTER_API_KEY`), or from `~/.pagepatrol/credentials.toml` if you paste
+one into `init`. `pagepatrol config` shows what is in use.
+
+Screenshots of the page go to the provider you picked. Use `--no-llm` for
+pages that shouldn't leave your machine, or a local model through Ollama.
 
 ## What it checks
 
