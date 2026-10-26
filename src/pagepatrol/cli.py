@@ -278,7 +278,7 @@ def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
 @app.command("config")
 def show_config() -> None:
     """Show the AI model setup."""
-    from pagepatrol.config import config_dir, load_llm_config, load_saved_key
+    from pagepatrol.config import key_location, load_llm_config
     from pagepatrol.llm.providers import PROVIDERS
 
     config = load_llm_config()
@@ -294,8 +294,8 @@ def show_config() -> None:
     env = next((n for n in env_names if n and os.environ.get(n)), None)
     if env:
         console.print(f"key       from ${env}")
-    elif load_saved_key(config.provider):
-        console.print(f"key       saved in {config_dir() / 'credentials.toml'}")
+    elif location := key_location(config.provider):
+        console.print(f"key       saved in {location}")
     else:
         console.print("key       none")
 

@@ -48,19 +48,73 @@ def save_llm_config(config: LLMConfig) -> Path:
     return path
 
 
+KEYRING_SERVICE = "pagepatrol"
+
+
 def _credentials_path() -> Path:
     return config_dir() / "credentials.toml"
 
 
+def _keyring_get(provider: str) -> str | None:
+    try:
+        import keyring
+        from keyring.errors import KeyringError
+    except ImportError:
+        return None
+    try:
+        return keyring.get_password(KEYRING_SERVICE, provider)
+    except KeyringError:
+        # No usable backend (headless Linux, some CI images).
+        return None
+
+
+def _keyring_set(provider: str, key: str) -> bool:
+    try:
+        import keyring
+        from keyring.errors import KeyringError
+    except ImportError:
+        return False
+    try:
+        keyring.set_password(KEYRING_SERVICE, provider, key)
+    except KeyringError:
+        return False
+    return True
+
+
+def key_location(provider: str) -> str | None:
+    if _keyring_get(provider):
+        return "system keyring"
+    if provider in _read_toml(_credentials_path()):
+        return str(_credentials_path())
+    return None
+
+
 def load_saved_key(provider: str) -> str | None:
-    return _read_toml(_credentials_path()).get(provider)
+    return _keyring_get(provider) or _read_toml(_credentials_path()).get(provider)
 
 
-def save_key(provider: str, key: str) -> Path:
+def save_key(provider: str, key: str) -> str:
+    """Store the key, preferring the OS keyring. Returns where it went."""
+    if _keyring_set(provider, key):
+        _remove_file_key(provider)
+        return "system keyring"
+
     path = _credentials_path()
     keys = _read_toml(path)
     keys[provider] = key
     _write_toml(path, keys)
     # Only matters on POSIX; on Windows the file inherits the user profile ACL.
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    return path
+    return str(path)
+
+
+def _remove_file_key(provider: str) -> None:
+    # Don't leave an old plain-text copy behind once the key is in the keyring.
+    path = _credentials_path()
+    keys = _read_toml(path)
+    if keys.pop(provider, None) is None:
+        return
+    if keys:
+        _write_toml(path, keys)
+    else:
+        path.unlink()

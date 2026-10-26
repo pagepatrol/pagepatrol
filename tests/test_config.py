@@ -1,16 +1,17 @@
+import keyring
 import pytest
+from keyring.backends import fail
 
-from pagepatrol.config import LLMConfig, load_llm_config, load_saved_key, save_key, save_llm_config
+from pagepatrol.config import (
+    LLMConfig,
+    key_location,
+    load_llm_config,
+    load_saved_key,
+    save_key,
+    save_llm_config,
+)
 from pagepatrol.llm import create_client
 from pagepatrol.llm.providers import PROVIDERS, LLMNotConfigured, resolve_key
-
-
-@pytest.fixture(autouse=True)
-def isolated_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAGEPATROL_HOME", str(tmp_path))
-    for name in ("PAGEPATROL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-        monkeypatch.delenv(name, raising=False)
-    return tmp_path
 
 
 def test_config_round_trip():
@@ -19,13 +20,38 @@ def test_config_round_trip():
     assert load_llm_config() == LLMConfig("ollama", "llava", "http://localhost:11434/v1")
 
 
+def test_keys_go_to_the_keyring(isolated_home):
+    assert save_key("anthropic", "secret") == "system keyring"
+    assert load_saved_key("anthropic") == "secret"
+    assert key_location("anthropic") == "system keyring"
+    assert not (isolated_home / "credentials.toml").exists()
+
+
+def test_falls_back_to_a_file_without_a_keyring(isolated_home):
+    keyring.set_keyring(fail.Keyring())
+    where = save_key("anthropic", 'with-"quotes"')
+    assert where.endswith("credentials.toml")
+    assert load_saved_key("anthropic") == 'with-"quotes"'
+    assert key_location("anthropic") == where
+
+
+def test_moving_to_the_keyring_removes_the_plain_text_copy(isolated_home):
+    working = keyring.get_keyring()
+    keyring.set_keyring(fail.Keyring())
+    save_key("anthropic", "old")
+    keyring.set_keyring(working)
+
+    save_key("anthropic", "new")
+    assert load_saved_key("anthropic") == "new"
+    assert not (isolated_home / "credentials.toml").exists()
+
+
 def test_key_resolution_prefers_environment(monkeypatch):
     provider = PROVIDERS["anthropic"]
     assert resolve_key(provider) is None
 
-    save_key("anthropic", 'saved-"key"')
-    assert load_saved_key("anthropic") == 'saved-"key"'
-    assert resolve_key(provider) == 'saved-"key"'
+    save_key("anthropic", "saved")
+    assert resolve_key(provider) == "saved"
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-env")
     assert resolve_key(provider) == "from-env"
