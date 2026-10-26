@@ -2,14 +2,21 @@ from collections import Counter
 from importlib.resources import files
 from pathlib import Path
 
-from jinja2 import Environment, select_autoescape
+from jinja2 import Environment, FunctionLoader, select_autoescape
 
-from pagepatrol.models import CheckReport, Severity, group_by_check
+from pagepatrol.models import CheckReport, RunReport, Severity, group_by_check
+
+
+def _load(name: str) -> str:
+    return files("pagepatrol.report").joinpath(name).read_text(encoding="utf-8")
 
 
 def _environment() -> Environment:
     env = Environment(
-        autoescape=select_autoescape(default=True), trim_blocks=True, lstrip_blocks=True
+        loader=FunctionLoader(_load),
+        autoescape=select_autoescape(default=True),
+        trim_blocks=True,
+        lstrip_blocks=True,
     )
     env.globals["group_by_check"] = group_by_check
     env.globals["verdict_labels"] = {
@@ -21,19 +28,36 @@ def _environment() -> Environment:
     return env
 
 
-def write_report(report: CheckReport, out_dir: Path) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+def _totals(findings) -> dict[str, int]:
+    counts = Counter(f.severity for f in findings)
+    return {s.value: counts.get(s, 0) for s in Severity}
 
-    template_source = (
-        files("pagepatrol.report").joinpath("template.html").read_text(encoding="utf-8")
-    )
-    template = _environment().from_string(template_source)
-    totals = Counter(f.severity for f in report.all_findings())
-    html = template.render(
-        report=report,
-        totals={s.value: totals.get(s, 0) for s in Severity},
-    )
+
+def _write(out_dir: Path, template: str, json_text: str, **context) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "report.json").write_text(json_text, encoding="utf-8")
+    html = _environment().get_template(template).render(**context)
     path = out_dir / "report.html"
     path.write_text(html, encoding="utf-8")
     return path
+
+
+def write_report(report: CheckReport, out_dir: Path) -> Path:
+    return _write(
+        out_dir,
+        "check.html",
+        report.model_dump_json(indent=2),
+        report=report,
+        totals=_totals(report.all_findings()),
+    )
+
+
+def write_run_report(report: RunReport, out_dir: Path) -> Path:
+    return _write(
+        out_dir,
+        "run.html",
+        report.model_dump_json(indent=2),
+        report=report,
+        totals=_totals(report.all_findings()),
+        passed=sum(1 for s in report.scenarios if s.status == "passed"),
+    )

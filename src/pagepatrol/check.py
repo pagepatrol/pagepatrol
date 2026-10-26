@@ -55,7 +55,7 @@ class CheckOptions:
 
 
 @dataclass
-class _Runtime:
+class RuntimeCollector:
     console: list[ConsoleMessage] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     seen_urls: set[str] = field(default_factory=set)
@@ -148,7 +148,7 @@ async def _scroll_through(page: Page) -> None:
     await page.wait_for_timeout(300)
 
 
-async def _open(context: BrowserContext, url: str, runtime: _Runtime) -> Page:
+async def _open(context: BrowserContext, url: str, runtime: RuntimeCollector) -> Page:
     page = await context.new_page()
     runtime.attach(page)
     try:
@@ -207,7 +207,7 @@ async def _check_viewport(
         bypass_csp=True,
     )
     try:
-        runtime = _Runtime()
+        runtime = RuntimeCollector()
         page = await _open(context, url, runtime)
         result = ViewportResult(viewport=viewport, page_title=await page.title())
 

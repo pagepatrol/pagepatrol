@@ -1,29 +1,9 @@
-{% macro finding(f) %}
-<div class="finding {{ f.severity.value }}"{% if f.marker %} data-y="{{ f.rect.y | round | int }}" title="Show on screenshot"{% endif %}>
-  <div class="head">
-    {% if f.marker %}<span class="marker">{{ f.marker }}</span>{% endif %}
-    <strong>{{ f.message }}</strong>
-    {% if f.details.source == "llm" %}<span class="ai">AI</span>{% endif %}
-  </div>
-  {% if f.selector %}<div class="meta"><code>{{ f.selector }}</code></div>{% endif %}
-  {% if f.details.other %}<div class="meta">and <code>{{ f.details.other }}</code></div>{% endif %}
-  {% if f.details.url %}<div class="meta"><code>{{ f.details.url }}</code></div>{% endif %}
-  {% if f.details.href %}<div class="meta"><code>{{ f.details.href }}</code></div>{% endif %}
-  {% if f.details.src %}<div class="meta"><code>{{ f.details.src }}</code></div>{% endif %}
-  {% if f.details.review %}
-  <div class="review {{ f.details.review.verdict }}">
-    <span class="ai">AI</span> {{ verdict_labels.get(f.details.review.verdict, f.details.review.verdict) }}{% if f.details.review.reason %}: {{ f.details.review.reason }}{% endif %}
-  </div>
-  {% endif %}
-  {% if f.details.help_url %}<div class="meta"><a href="{{ f.details.help_url }}" target="_blank" rel="noopener">{{ f.details.rule }}</a>{% if f.details.total_nodes > 1 %} &middot; {{ f.details.total_nodes }} elements on the page{% endif %}</div>{% endif %}
-</div>
-{% endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PagePatrol report · {{ report.results[0].page_title or report.target }}</title>
+<title>{% block title %}PagePatrol report{% endblock %}</title>
 <style>
   :root {
     --bg: #fafafa; --surface: #fff; --text: #1a1a1a; --muted: #666; --border: #e3e3e3;
@@ -81,6 +61,23 @@
   .console li { padding: 4px 0; border-bottom: 1px solid var(--border); }
   .console .error { color: var(--error); } .console .warning { color: var(--warning); }
   footer { color: var(--muted); font-size: 13px; }
+  .status { display: inline-block; font: 600 11px/18px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .04em; padding: 0 7px; border-radius: 4px; background: var(--border); color: var(--muted); }
+  .status.passed { background: #e3f5e8; color: #1a7f37; }
+  .status.failed { background: var(--error-bg); color: var(--error); }
+  @media (prefers-color-scheme: dark) { .status.passed { background: #16301f; color: #57d07d; } }
+  nav a.failed { border-color: var(--error); }
+  section.scenario { margin-bottom: 40px; }
+  section.scenario > h2 { font-size: 18px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
+  ol.steps { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; }
+  .step { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .step.failed { border-color: var(--error); }
+  .step.skipped { opacity: .55; }
+  .step-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .step-error { margin-top: 6px; color: var(--error); font-size: 14px; }
+  .step-body { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; margin-top: 10px; align-items: start; }
+  @media (max-width: 700px) { .step-body { grid-template-columns: 1fr; } }
+  .thumb img { display: block; width: 100%; height: auto; max-height: 240px; object-fit: cover; object-position: top; border: 1px solid var(--border); border-radius: 4px; }
+  .step > .meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
   .ai { display: inline-block; font: 600 10px/16px system-ui, sans-serif; padding: 0 5px; border-radius: 4px; background: var(--info-bg); color: var(--info); letter-spacing: .03em; }
   .review { margin-top: 6px; font-size: 13px; color: var(--muted); }
   .review.confirmed { color: var(--text); }
@@ -90,82 +87,7 @@
 </head>
 <body>
 <main>
-  <header>
-    <h1>{{ report.results[0].page_title or "Untitled page" }}</h1>
-    <p>{{ report.url }}</p>
-  </header>
-
-  <div class="totals">
-    <div class="total error"><b>{{ totals.error }}</b>errors</div>
-    <div class="total warning"><b>{{ totals.warning }}</b>warnings</div>
-    <div class="total info"><b>{{ totals.info }}</b>notes</div>
-  </div>
-
-  {% if report.results | length > 1 %}
-  <nav>
-    {% for r in report.results %}
-    <a href="#vp-{{ r.viewport.name }}">{{ r.viewport.name }} · {{ r.findings | length }}</a>
-    {% endfor %}
-  </nav>
-  {% endif %}
-
-  {% for r in report.results %}
-  <section class="viewport" id="vp-{{ r.viewport.name }}">
-    <h2>{{ r.viewport.name }} <span class="check">{{ r.viewport.width }}×{{ r.viewport.height }}</span></h2>
-    <div class="layout">
-      <div class="shot">
-        {% if r.annotated_screenshot %}
-        <div class="shot-toggle">
-          <label><input type="radio" name="shot-{{ loop.index }}" checked onchange="this.closest('.shot').querySelector('img').src='{{ r.annotated_screenshot }}'"> marked</label>
-          <label><input type="radio" name="shot-{{ loop.index }}" onchange="this.closest('.shot').querySelector('img').src='{{ r.screenshot }}'"> clean</label>
-        </div>
-        <img src="{{ r.annotated_screenshot }}" alt="Screenshot at {{ r.viewport.name }} with findings marked" loading="lazy">
-        {% elif r.screenshot %}
-        <img src="{{ r.screenshot }}" alt="Screenshot at {{ r.viewport.name }}" loading="lazy">
-        {% endif %}
-      </div>
-
-      <div>
-        {% if r.review_summary %}<p class="summary"><span class="ai">AI</span> {{ r.review_summary }}</p>{% endif %}
-        {% if r.review_error %}<p class="summary failed">AI review failed: {{ r.review_error }}</p>{% endif %}
-        {% if r.findings %}
-        <div class="findings">
-          {% for g in group_by_check(r.findings) %}
-          <div class="group">
-            <div class="group-head {{ g.severity.value }}"><span class="check">{{ g.check }}</span> <span class="count">{{ g.count }}</span></div>
-            {% for f in g.findings[:5] %}{{ finding(f) }}{% endfor %}
-            {% if g.count > 5 %}
-            <details>
-              <summary>{{ g.count - 5 }} more</summary>
-              {% for f in g.findings[5:] %}{{ finding(f) }}{% endfor %}
-            </details>
-            {% endif %}
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="empty">No issues found at this size.</div>
-        {% endif %}
-
-        {% if r.console %}
-        <details class="console">
-          <summary>Console output ({{ r.console | length }})</summary>
-          <ul>
-            {% for m in r.console %}
-            <li class="{{ m.type }}"><code>[{{ m.type }}] {{ m.text }}</code>{% if m.location %} <span class="check">{{ m.location }}</span>{% endif %}</li>
-            {% endfor %}
-          </ul>
-        </details>
-        {% endif %}
-      </div>
-    </div>
-  </section>
-  {% endfor %}
-
-  <footer>
-    {% if report.llm %}AI review by {{ report.llm.model }} ({{ report.llm.depth }}, {{ "{:,}".format(report.llm.input_tokens) }} in / {{ "{:,}".format(report.llm.output_tokens) }} out tokens{% if report.llm.cost_usd is not none %}, about ${{ "%.3f"|format(report.llm.cost_usd) }}{% endif %}) &middot; {% endif %}
-    PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
-  </footer>
+{% block content %}{% endblock %}
 </main>
 <script>
   document.querySelectorAll('.finding[data-y]').forEach((el) => {

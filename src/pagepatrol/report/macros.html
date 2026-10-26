@@ -1,0 +1,20 @@
+{% macro finding(f) %}
+<div class="finding {{ f.severity.value }}"{% if f.marker %} data-y="{{ f.rect.y | round | int }}" title="Show on screenshot"{% endif %}>
+  <div class="head">
+    {% if f.marker %}<span class="marker">{{ f.marker }}</span>{% endif %}
+    <strong>{{ f.message }}</strong>
+    {% if f.details.source == "llm" %}<span class="ai">AI</span>{% endif %}
+  </div>
+  {% if f.selector %}<div class="meta"><code>{{ f.selector }}</code></div>{% endif %}
+  {% if f.details.other %}<div class="meta">and <code>{{ f.details.other }}</code></div>{% endif %}
+  {% if f.details.url %}<div class="meta"><code>{{ f.details.url }}</code></div>{% endif %}
+  {% if f.details.href %}<div class="meta"><code>{{ f.details.href }}</code></div>{% endif %}
+  {% if f.details.src %}<div class="meta"><code>{{ f.details.src }}</code></div>{% endif %}
+  {% if f.details.review %}
+  <div class="review {{ f.details.review.verdict }}">
+    <span class="ai">AI</span> {{ verdict_labels.get(f.details.review.verdict, f.details.review.verdict) }}{% if f.details.review.reason %}: {{ f.details.review.reason }}{% endif %}
+  </div>
+  {% endif %}
+  {% if f.details.help_url %}<div class="meta"><a href="{{ f.details.help_url }}" target="_blank" rel="noopener">{{ f.details.rule }}</a>{% if f.details.total_nodes > 1 %} &middot; {{ f.details.total_nodes }} elements on the page{% endif %}</div>{% endif %}
+</div>
+{% endmacro %}

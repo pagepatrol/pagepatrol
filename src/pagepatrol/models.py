@@ -123,3 +123,40 @@ def group_findings(report: CheckReport) -> list[FindingGroup]:
             if g.severity.rank > merged.severity.rank:
                 merged.severity = g.severity
     return sorted(groups.values(), key=lambda g: (-g.severity.rank, -g.count))
+
+
+class StepResult(BaseModel):
+    index: int
+    action: str
+    description: str
+    status: str  # passed, failed, skipped
+    url: str | None = None
+    error: str | None = None
+    screenshot: str | None = None
+    duration_ms: int = 0
+    # How the target was actually found, so the step can be replayed exactly.
+    resolved: dict[str, Any] | None = None
+    findings: list[Finding] = ModelField(default_factory=list)
+
+
+class ScenarioResult(BaseModel):
+    name: str
+    source: str | None = None
+    viewport: Viewport
+    status: str  # passed, failed
+    steps: list[StepResult] = ModelField(default_factory=list)
+    console: list[ConsoleMessage] = ModelField(default_factory=list)
+
+    def all_findings(self) -> list[Finding]:
+        return [f for s in self.steps for f in s.findings]
+
+
+class RunReport(BaseModel):
+    base_url: str | None
+    pagepatrol_version: str
+    started_at: datetime
+    duration_s: float
+    scenarios: list[ScenarioResult]
+
+    def all_findings(self) -> list[Finding]:
+        return [f for s in self.scenarios for f in s.all_findings()]

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo shop</title>
+<style>body { font: 16px/1.5 sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }</style>
+</head>
+<body>
+<main>
+<h1>Demo shop</h1>
+<nav><a href="contact.html">Contact us</a></nav>
+<p><button type="button" id="delete">Delete account</button></p>
+<p id="status"></p>
+<script>
+  document.getElementById("delete").addEventListener("click", () => {
+    document.getElementById("status").textContent = "Account deleted";
+  });
+</script>
+</main>
+</body>
+</html>

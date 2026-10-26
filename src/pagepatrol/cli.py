@@ -296,6 +296,150 @@ def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
     )
 
 
+@app.command()
+def run(
+    paths: list[Path] = typer.Argument(
+        None, help="Scenario files or folders. Default: .pagepatrol/scenarios"
+    ),
+    base_url: str | None = typer.Option(
+        None, "--base-url", "-b", help="Where relative scenario URLs point, e.g. localhost:3000."
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Where to write the report. Default: .pagepatrol/runs/<time>"
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Don't ask before clicking things like Delete or Pay on non-local sites.",
+    ),
+    login_state: Path | None = typer.Option(
+        None,
+        "--login-state",
+        help="Saved login from `pagepatrol login`. Default: .pagepatrol/auth.json if it exists.",
+    ),
+    headed: bool = typer.Option(False, "--headed", help="Show the browser while it runs."),
+    fail_on: FailOn = typer.Option(
+        FailOn.ERROR,
+        "--fail-on",
+        help="Also exit with code 1 when findings of this level exist. Failed scenarios always do.",
+    ),
+    open_report: bool = typer.Option(
+        False, "--open", help="Open the report in a browser when done."
+    ),
+) -> None:
+    """Run scenarios step by step, checking the page after every step."""
+    from pagepatrol.check import BrowserNotInstalled
+    from pagepatrol.report import write_run_report
+    from pagepatrol.runner import RunOptions, run_scenarios
+    from pagepatrol.scenario import ScenarioError, load_scenarios
+    from pagepatrol.targets import resolve_target
+
+    paths = paths or [Path(".pagepatrol") / "scenarios"]
+    try:
+        scenarios = [s for p in paths for s in load_scenarios(p)]
+        base = resolve_target(base_url) if base_url else None
+    except (ScenarioError, TargetError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    default_state = Path(".pagepatrol") / "auth.json"
+    if login_state is None and default_state.exists():
+        login_state = default_state
+        console.print(f"[dim]Using the saved login in {default_state}[/dim]")
+
+    out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    options = RunOptions(
+        out_dir=out_dir,
+        base_url=base,
+        storage_state=login_state,
+        confirm=None if yes else _confirm_destructive,
+        headed=headed,
+    )
+    try:
+        with console.status(f"Running {len(scenarios)} scenario(s)..."):
+            report = run_scenarios(scenarios, options)
+    except BrowserNotInstalled as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    report_path = write_run_report(report, out_dir)
+    _print_run_summary(report)
+    console.print(f"\nReport: [bold]{report_path.resolve()}[/bold]", soft_wrap=True)
+    if open_report:
+        webbrowser.open(report_path.resolve().as_uri())
+
+    failed = any(s.status == "failed" for s in report.scenarios)
+    threshold = {FailOn.ERROR: Severity.ERROR.rank, FailOn.WARNING: Severity.WARNING.rank}.get(
+        fail_on
+    )
+    too_many = threshold is not None and any(
+        f.severity.rank >= threshold for f in report.all_findings()
+    )
+    if failed or too_many:
+        raise typer.Exit(1)
+
+
+def _confirm_destructive(name: str, url: str) -> bool:
+    if not sys.stdin.isatty():
+        return False
+    console.print()
+    return typer.confirm(
+        f"About to click {name!r} on {url}. This may not be undoable. Go ahead?", default=False
+    )
+
+
+def _print_run_summary(report) -> None:
+    console.print()
+    for s in report.scenarios:
+        mark = "[green]PASS[/]" if s.status == "passed" else "[red]FAIL[/]"
+        done = sum(1 for step in s.steps if step.status == "passed")
+        console.print(f"{mark}  {s.name} [dim]({done}/{len(s.steps)} steps)[/dim]")
+        failed = next((step for step in s.steps if step.status == "failed"), None)
+        if failed:
+            console.print(f"      step {failed.index + 1}: {failed.description}")
+            console.print(f"      [red]{failed.error}[/red]", soft_wrap=True)
+    findings = report.all_findings()
+    counts = {sev: sum(1 for f in findings if f.severity == sev) for sev in Severity}
+    parts = [f"[{SEVERITY_STYLE[sev]}]{counts[sev]} {sev.value}[/]" for sev in Severity]
+    console.print("\nFindings along the way: " + "  ".join(parts))
+    console.print(f"[dim]Took {report.duration_s:.0f}s[/dim]")
+
+
+@app.command()
+def login(
+    url: str = typer.Argument(..., help="The page where you log in."),
+    save: Path = typer.Option(
+        Path(".pagepatrol") / "auth.json", "--save", help="Where to keep the session."
+    ),
+) -> None:
+    """Open a browser so you can log in, then save the session for `pagepatrol run`."""
+    import asyncio
+
+    from playwright.async_api import async_playwright
+
+    from pagepatrol.targets import resolve_target
+
+    async def capture() -> None:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
+            page = await context.new_page()
+            await page.goto(resolve_target(url))
+            console.print("Log in in the browser window, then come back here and press Enter.")
+            await asyncio.to_thread(input)
+            save.parent.mkdir(parents=True, exist_ok=True)
+            await context.storage_state(path=str(save))
+            await browser.close()
+
+    asyncio.run(capture())
+    console.print(f"Saved the session to {save}. `pagepatrol run` will use it.")
+    console.print(
+        "[yellow]This file holds your login cookies. Don't commit it: "
+        "add .pagepatrol/ to your .gitignore.[/yellow]"
+    )
+
+
 @app.command("config")
 def show_config() -> None:
     """Show the AI model setup."""

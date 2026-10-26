@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact</title>
+<style>
+  body { font: 16px/1.5 sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }
+  label { display: block; margin-top: 12px; }
+  .toast { position: absolute; top: 20px; left: 20px; font-size: 24px; background: transparent; }
+</style>
+</head>
+<body>
+<main>
+<h1>Contact us</h1>
+<form id="form">
+  <label for="email">Email</label>
+  <input id="email" type="email" required>
+  <label for="message">Message</label>
+  <textarea id="message" placeholder="How can we help?"></textarea>
+  <p><button type="submit">Send</button></p>
+</form>
+<script>
+  document.getElementById("form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const toast = document.createElement("p");
+    toast.className = "toast";
+    toast.textContent = "Thanks for your message";
+    document.body.appendChild(toast);
+    history.replaceState(null, "", "#sent");
+  });
+</script>
+</main>
+</body>
+</html>

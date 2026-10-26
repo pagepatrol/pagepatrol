@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "macros.html" import finding %}
+{% block title %}PagePatrol run · {{ passed }}/{{ report.scenarios | length }} passed{% endblock %}
+{% block content %}
+  <header>
+    <h1>{{ passed }} of {{ report.scenarios | length }} scenario{{ "" if report.scenarios | length == 1 else "s" }} passed</h1>
+    {% if report.base_url %}<p>{{ report.base_url }}</p>{% endif %}
+  </header>
+
+  <div class="totals">
+    <div class="total error"><b>{{ totals.error }}</b>errors</div>
+    <div class="total warning"><b>{{ totals.warning }}</b>warnings</div>
+    <div class="total info"><b>{{ totals.info }}</b>notes</div>
+  </div>
+
+  {% if report.scenarios | length > 1 %}
+  <nav>
+    {% for s in report.scenarios %}
+    <a href="#sc-{{ loop.index }}" class="{{ s.status }}">{{ "✓" if s.status == "passed" else "✗" }} {{ s.name }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  {% for s in report.scenarios %}
+  <section class="scenario" id="sc-{{ loop.index }}">
+    <h2><span class="status {{ s.status }}">{{ s.status }}</span> {{ s.name }}</h2>
+    <p class="check">{% if s.source %}{{ s.source }} · {% endif %}{{ s.viewport.name }} {{ s.viewport.width }}×{{ s.viewport.height }}</p>
+
+    <ol class="steps">
+      {% for step in s.steps %}
+      <li class="step {{ step.status }}">
+        <div class="step-head">
+          <span class="status {{ step.status }}">{{ step.status }}</span>
+          <strong>{{ step.description }}</strong>
+          <span class="check">{{ step.duration_ms }} ms</span>
+        </div>
+        {% if step.error %}<div class="step-error">{{ step.error }}</div>{% endif %}
+        {% if step.screenshot or step.findings %}
+        <div class="step-body">
+          {% if step.screenshot %}
+          <a href="{{ step.screenshot }}" target="_blank" class="thumb"><img src="{{ step.screenshot }}" alt="After step {{ loop.index }}" loading="lazy"></a>
+          {% endif %}
+          {% if step.findings %}
+          <div class="findings">
+            {% for g in group_by_check(step.findings) %}
+            <div class="group">
+              <div class="group-head {{ g.severity.value }}"><span class="check">{{ g.check }}</span> <span class="count">{{ g.count }}</span></div>
+              {% for f in g.findings[:3] %}{{ finding(f) }}{% endfor %}
+              {% if g.count > 3 %}
+              <details>
+                <summary>{{ g.count - 3 }} more</summary>
+                {% for f in g.findings[3:] %}{{ finding(f) }}{% endfor %}
+              </details>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if step.url %}<div class="meta"><code>{{ step.url }}</code></div>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+
+    {% if s.console %}
+    <details class="console">
+      <summary>Console output ({{ s.console | length }})</summary>
+      <ul>
+        {% for m in s.console %}
+        <li class="{{ m.type }}"><code>[{{ m.type }}] {{ m.text }}</code>{% if m.location %} <span class="check">{{ m.location }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <footer>
+    PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
+  </footer>
+{% endblock %}
