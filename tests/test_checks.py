@@ -78,3 +78,23 @@ def test_report_files(tmp_path):
     assert (tmp_path / result.annotated_screenshot).exists()
     assert result.findings[0].marker == 1
     assert "Text overlaps other text" in html.read_text(encoding="utf-8")
+
+
+def test_page_is_back_at_the_top_before_capture():
+    import asyncio
+
+    from playwright.async_api import async_playwright
+
+    from pagepatrol.check import _scroll_through
+
+    async def scroll_position():
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page(viewport={"width": 800, "height": 600})
+            await page.goto((FIXTURES / "smooth_scroll.html").as_uri())
+            await _scroll_through(page)
+            position = await page.evaluate("[scrollX, scrollY]")
+            await browser.close()
+            return position
+
+    assert asyncio.run(scroll_position()) == [0, 0]

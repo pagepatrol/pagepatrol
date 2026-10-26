@@ -130,12 +130,17 @@ async def _scroll_through(page: Page) -> None:
     # are there before we take screenshots and measure.
     await page.evaluate(
         """async () => {
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          // 'instant' overrides scroll-behavior: smooth. Otherwise the jump back
+          // to the top is animated and screenshots catch it halfway.
           const step = Math.max(innerHeight * 0.8, 200);
           for (let i = 0; i < 40 && scrollY + innerHeight < document.documentElement.scrollHeight; i++) {
-            scrollBy(0, step);
-            await new Promise((r) => setTimeout(r, 120));
+            scrollBy({ top: step, behavior: 'instant' });
+            await sleep(120);
           }
-          scrollTo(0, 0);
+          scrollTo({ top: 0, left: 0, behavior: 'instant' });
+          for (let i = 0; i < 50 && (scrollY !== 0 || scrollX !== 0); i++) await sleep(20);
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         }"""
     )
     await page.wait_for_timeout(300)
