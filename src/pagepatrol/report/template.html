@@ -163,7 +163,7 @@
   {% endfor %}
 
   <footer>
-    {% if report.llm %}AI review by {{ report.llm.model }} ({{ report.llm.depth }}, {{ "{:,}".format(report.llm.input_tokens) }} in / {{ "{:,}".format(report.llm.output_tokens) }} out tokens) &middot; {% endif %}
+    {% if report.llm %}AI review by {{ report.llm.model }} ({{ report.llm.depth }}, {{ "{:,}".format(report.llm.input_tokens) }} in / {{ "{:,}".format(report.llm.output_tokens) }} out tokens{% if report.llm.cost_usd is not none %}, about ${{ "%.3f"|format(report.llm.cost_usd) }}{% endif %}) &middot; {% endif %}
     PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
   </footer>
 </main>

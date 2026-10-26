@@ -66,6 +66,8 @@ class LLMRun(BaseModel):
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    # None when we don't know the model's price.
+    cost_usd: float | None = None
 
 
 class CheckReport(BaseModel):

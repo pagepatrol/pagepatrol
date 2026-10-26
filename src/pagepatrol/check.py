@@ -15,7 +15,9 @@ from pagepatrol.checks import install_helpers, load_js
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
 from pagepatrol.checks.links import check_links
+from pagepatrol.config import LLMConfig
 from pagepatrol.llm import Client
+from pagepatrol.llm.pricing import estimate_cost, prices_for
 from pagepatrol.models import (
     CheckReport,
     ConsoleMessage,
@@ -48,7 +50,7 @@ class CheckOptions:
     check_links: bool = True
     external_links: bool = False
     llm: Client | None = None
-    llm_provider: str | None = None
+    llm_config: LLMConfig | None = None
     depth: Depth = Depth.BALANCED
 
 
@@ -289,13 +291,15 @@ async def _run(target: str, url: str, options: CheckOptions) -> CheckReport:
     llm_run = None
     if options.llm:
         usage = options.llm.usage
+        prices = prices_for(options.llm_config) if options.llm_config else None
         llm_run = LLMRun(
-            provider=options.llm_provider or "unknown",
+            provider=options.llm_config.provider if options.llm_config else "unknown",
             model=options.llm.model,
             depth=options.depth.value,
             calls=usage.calls,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
+            cost_usd=estimate_cost(prices, usage.input_tokens, usage.output_tokens),
         )
 
     return CheckReport(

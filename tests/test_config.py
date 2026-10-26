@@ -72,3 +72,19 @@ def test_local_providers_need_no_key():
 def test_unknown_provider():
     with pytest.raises(LLMNotConfigured):
         create_client(LLMConfig("nope", "x"))
+
+
+def test_prices():
+    from pagepatrol.llm.pricing import estimate_cost, prices_for
+
+    assert prices_for(LLMConfig("anthropic", "claude-sonnet-5-5")) == (2.0, 10.0)
+    assert prices_for(LLMConfig("anthropic", "claude-unknown")) is None
+    assert prices_for(LLMConfig("openai", "some-model")) is None
+    assert prices_for(LLMConfig("ollama", "llava")) == (0.0, 0.0)
+    custom = LLMConfig("openai", "some-model", price_input=1.5, price_output=6.0)
+    assert prices_for(custom) == (1.5, 6.0)
+
+    save_llm_config(custom)
+    assert load_llm_config() == custom
+    assert estimate_cost((1.5, 6.0), 2_000_000, 100_000) == pytest.approx(3.6)
+    assert estimate_cost(None, 1, 1) is None

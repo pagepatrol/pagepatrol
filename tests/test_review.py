@@ -5,6 +5,7 @@ import pytest
 
 from pagepatrol.check import CheckOptions, run_check
 from pagepatrol.cli import _solid_png, _vision_probe
+from pagepatrol.config import LLMConfig
 from pagepatrol.llm import LLMError, Request, Usage, parse_json
 from pagepatrol.models import Finding, Rect, Severity
 from pagepatrol.report import write_report
@@ -35,7 +36,10 @@ class FakeClient:
 
 def run(name: str, tmp_path: Path, client: FakeClient):
     options = CheckOptions(
-        viewports=[VIEWPORTS["desktop"]], out_dir=tmp_path, llm=client, llm_provider="fake"
+        viewports=[VIEWPORTS["desktop"]],
+        out_dir=tmp_path,
+        llm=client,
+        llm_config=LLMConfig("anthropic", "claude-sonnet-5-5"),
     )
     return run_check(str(FIXTURES / name), options)
 
@@ -74,6 +78,8 @@ def test_review_downgrades_intentional_findings_and_adds_new_ones(tmp_path):
 
     assert report.results[0].review_summary == "One layout issue."
     assert report.llm.calls == 1 and report.llm.input_tokens == 1000
+    # Sonnet 5.5: 1000 in at $2/M + 100 out at $10/M
+    assert report.llm.cost_usd == pytest.approx(0.003)
 
     html = write_report(report, tmp_path).read_text(encoding="utf-8")
     assert "looks intentional" in html and "Heading is crammed" in html

@@ -16,6 +16,9 @@ class LLMConfig:
     provider: str
     model: str
     base_url: str | None = None
+    # USD per million tokens, for providers whose prices we don't ship.
+    price_input: float | None = None
+    price_output: float | None = None
 
 
 def _write_toml(path: Path, values: dict[str, str]) -> None:
@@ -36,7 +39,13 @@ def load_llm_config() -> LLMConfig | None:
     data = _read_toml(config_dir() / "config.toml").get("llm")
     if not data or not data.get("provider") or not data.get("model"):
         return None
-    return LLMConfig(provider=data["provider"], model=data["model"], base_url=data.get("base_url"))
+    return LLMConfig(
+        provider=data["provider"],
+        model=data["model"],
+        base_url=data.get("base_url"),
+        price_input=data.get("price_input"),
+        price_output=data.get("price_output"),
+    )
 
 
 def save_llm_config(config: LLMConfig) -> Path:

@@ -105,7 +105,7 @@ def check(
         depth=depth,
     )
     if llm is not False:
-        options.llm, options.llm_provider = _llm_client(required=llm is True)
+        options.llm, options.llm_config = _llm_client(required=llm is True)
 
     try:
         with console.status(f"Checking {target}..."):
@@ -142,7 +142,7 @@ def _llm_client(required: bool):
         )
         return None, None
     try:
-        return create_client(config), config.provider
+        return create_client(config), config
     except LLMNotConfigured as exc:
         if required:
             console.print(f"[red]{exc}[/red]")
@@ -158,6 +158,7 @@ def init() -> None:
 
     from pagepatrol.config import LLMConfig, save_key, save_llm_config
     from pagepatrol.llm import LLMError, create_client
+    from pagepatrol.llm.pricing import prices_for
     from pagepatrol.llm.providers import PROVIDERS
 
     console.print(
@@ -217,6 +218,15 @@ def init() -> None:
         answer = shown[int(answer) - 1]
 
     config = LLMConfig(provider.id, model=answer, base_url=base_url)
+    if prices_for(config) is None:
+        console.print(
+            "\nOptional: the model's price, so reports can show what each check cost.\n"
+            "Look it up on your provider's pricing page. Leave empty to skip."
+        )
+        config.price_input = _ask_price("USD per 1M input tokens")
+        config.price_output = _ask_price("USD per 1M output tokens") if config.price_input else None
+        if config.price_output is None:
+            config.price_input = None
     client = create_client(config, api_key=key)
     with console.status(f"Testing {answer} with an image..."):
         ok, message = asyncio.run(_vision_probe(client))
@@ -228,6 +238,17 @@ def init() -> None:
     if store_key and key:
         console.print(f"Key saved to {save_key(provider.id, key)}")
     console.print(f"Saved to {path}. `pagepatrol check` will now include an AI review.")
+
+
+def _ask_price(label: str) -> float | None:
+    answer = typer.prompt(label, default="", show_default=False).strip().replace(",", ".")
+    if not answer:
+        return None
+    try:
+        return max(0.0, float(answer.lstrip("$")))
+    except ValueError:
+        console.print("[yellow]Not a number, skipping.[/yellow]")
+        return None
 
 
 async def _vision_probe(client) -> tuple[bool, str]:
@@ -290,6 +311,13 @@ def show_config() -> None:
     console.print(f"model     {config.model}")
     if config.base_url:
         console.print(f"base url  {config.base_url}")
+    from pagepatrol.llm.pricing import prices_for
+
+    prices = prices_for(config)
+    if prices:
+        console.print(f"price     ${prices[0]:g} in / ${prices[1]:g} out per 1M tokens")
+    else:
+        console.print("price     unknown")
     env_names = ["PAGEPATROL_API_KEY", provider.key_env if provider else None]
     env = next((n for n in env_names if n and os.environ.get(n)), None)
     if env:
@@ -313,6 +341,14 @@ def install(
     raise typer.Exit(subprocess.call(cmd))
 
 
+def format_cost(cost: float | None) -> str:
+    if cost is None:
+        return "cost unknown (set prices with `pagepatrol init`)"
+    if cost == 0:
+        return "free"
+    return f"about ${cost:.3f}" if cost < 0.1 else f"about ${cost:.2f}"
+
+
 def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
     console.print()
     for result in report.results:
@@ -321,11 +357,13 @@ def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
         parts = [f"[{SEVERITY_STYLE[s]}]{counts[s]} {s.value}[/]" for s in Severity]
         console.print(f"[bold]{vp.name:<8}[/bold] {vp.width}x{vp.height:<6} " + "  ".join(parts))
 
+    console.print(f"[dim]Took {report.duration_s:.0f}s[/dim]")
     if report.llm:
         llm = report.llm
         console.print(
             f"[dim]AI review: {llm.model} ({llm.depth}), {llm.calls} call(s), "
-            f"{llm.input_tokens:,} in / {llm.output_tokens:,} out tokens[/dim]"
+            f"{llm.input_tokens:,} in / {llm.output_tokens:,} out tokens, "
+            f"{format_cost(llm.cost_usd)}[/dim]"
         )
         for result in report.results:
             if result.review_error:
