@@ -111,6 +111,58 @@ from GitHub Actions through PyPI trusted publishing, with no long-lived token
 that could be stolen. If you find a security problem, please report it
 privately through GitHub's security advisories instead of a public issue.
 
+## Scenarios
+
+`check` looks at one page. A scenario walks through a flow the way a visitor
+would, and runs the same checks after every step, so a problem shows up at
+the step that caused it.
+
+```yaml
+# .pagepatrol/scenarios/contact.yaml
+name: Contact form sends a message
+url: /contact
+steps:
+  - fill: { target: Email, value: test@example.com }
+  - fill: { target: Message, value: Hello }
+  - click: Send
+  - expect: Thanks for your message
+```
+
+```sh
+pagepatrol run --base-url localhost:3000      # runs everything in .pagepatrol/scenarios
+pagepatrol run checkout.yaml -b https://staging.example.com --open
+```
+
+Targets are what people see on the page: a button's text, a field's label or
+placeholder, a link. PagePatrol finds them the way assistive technology does.
+When that isn't enough, be explicit:
+`{ role: button, name: Send }`, `{ label: Email }`, `{ css: "#send" }`,
+`{ testid: send-button }`, adding `nth: 1` to pick one of several. Quote
+values that contain `?`, `:` or `#`, as usual in YAML.
+
+| Step | Example |
+|---|---|
+| `goto` | `goto: /pricing` |
+| `click`, `hover`, `check`, `uncheck` | `click: Add to cart` |
+| `fill`, `select` | `fill: { target: Email, value: a@b.co }` |
+| `press` | `press: Enter` or `press: { key: Enter, target: Search }` |
+| `wait` | `wait: 500` or `wait: { text: Loaded }` |
+| `expect` | `expect: Saved`, `expect: { url: /thanks }`, `{ title: ... }`, `{ visible: ... }`, `{ hidden: ... }`, `{ no_text: Error }` |
+
+A file can hold one scenario or a list under `scenarios:`, and each scenario
+can set `viewport: mobile`. A failed step stops its scenario; the rest are
+marked skipped. `run` exits with code 1 if any scenario failed.
+
+On sites other than localhost and local files, PagePatrol asks before
+clicking anything that looks permanent, such as Delete, Pay or Place order.
+Pass `--yes` to skip the question. Without a terminal to ask in (CI), it
+stops the scenario instead.
+
+For pages behind a login, run `pagepatrol login https://example.com/login`
+once. A browser opens, you log in, and the session is saved to
+`.pagepatrol/auth.json`, which `run` then uses. That file holds your login
+cookies, so keep `.pagepatrol/` out of version control.
+
 ## What it checks
 
 | Check | Level | |
