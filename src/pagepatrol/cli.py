@@ -87,15 +87,22 @@ def check(
         "--depth",
         help="How much of the page the AI looks at, and how hard it thinks.",
     ),
+    browser: list[str] = typer.Option(
+        ["chromium"],
+        "--browser",
+        help="chromium, firefox, webkit (Safari's engine) or all. Repeat or comma-separate.",
+    ),
 ) -> None:
     """Check a single page for layout, readability, accessibility and runtime problems."""
-    from pagepatrol.check import BrowserNotInstalled, CheckOptions, PageLoadError, run_check
+    from pagepatrol.browsers import BrowserNotInstalled
+    from pagepatrol.check import CheckOptions, PageLoadError, run_check
     from pagepatrol.report import write_report
 
     try:
         viewports = [parse_viewport(v) for v in viewport]
     except TargetError as exc:
         raise typer.BadParameter(str(exc), param_hint="--viewport") from exc
+    browsers = _browsers(browser)
 
     out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
     options = CheckOptions(
@@ -104,6 +111,7 @@ def check(
         check_links=links,
         external_links=external_links,
         depth=depth,
+        browsers=browsers,
     )
     if llm is not False:
         options.llm, options.llm_config = _llm_client(required=llm is True)
@@ -347,9 +355,14 @@ def run(
         "--install/--no-install",
         help="Install the project's missing packages without asking (or never).",
     ),
+    browser: list[str] = typer.Option(
+        ["chromium"],
+        "--browser",
+        help="chromium, firefox, webkit (Safari's engine) or all. Repeat or comma-separate.",
+    ),
 ) -> None:
     """Run scenarios step by step, checking the page after every step."""
-    from pagepatrol.check import BrowserNotInstalled
+    from pagepatrol.browsers import BrowserNotInstalled
     from pagepatrol.project import is_project
     from pagepatrol.report import write_run_report
     from pagepatrol.runner import RunOptions, run_scenarios
@@ -390,6 +403,7 @@ def run(
         headed=headed,
         recordings=home / "recordings.yaml",
         fresh=fresh,
+        browsers=_browsers(browser),
     )
     plain = any(step.action == "do" for s in scenarios for step in s.steps)
     if plain and llm is not False:
@@ -430,6 +444,15 @@ def run(
     )
     if failed or too_many:
         raise typer.Exit(1)
+
+
+def _browsers(values: list[str]) -> list[str]:
+    from pagepatrol.browsers import parse_browsers
+
+    try:
+        return parse_browsers(values)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--browser") from exc
 
 
 def _needs_base_url(scenario) -> bool:
@@ -526,7 +549,8 @@ def _print_run_summary(report, labels: tuple[str, str] = ("PASS", "FAIL")) -> No
         ok, bad = (label.ljust(width) for label in labels)
         mark = f"[green]{ok}[/]" if s.status == "passed" else f"[red]{bad}[/]"
         done = sum(1 for step in s.steps if step.status == "passed")
-        console.print(f"{mark}  {s.name} [dim]({done}/{len(s.steps)} steps)[/dim]")
+        where = f" · {s.browser}" if len(report.browsers) > 1 else ""
+        console.print(f"{mark}  {s.name}{where} [dim]({done}/{len(s.steps)} steps)[/dim]")
         failed = next((step for step in s.steps if step.status == "failed"), None)
         if failed:
             console.print(f"      step {failed.index + 1}: {failed.description}")
@@ -722,9 +746,14 @@ def explore(
         "--install/--no-install",
         help="Install the project's missing packages without asking (or never).",
     ),
+    browser: list[str] = typer.Option(
+        ["chromium"],
+        "--browser",
+        help="chromium, firefox, webkit (Safari's engine) or all. Repeat or comma-separate.",
+    ),
 ) -> None:
     """Wander through a site without a script: follow links, press buttons, fill forms."""
-    from pagepatrol.check import BrowserNotInstalled
+    from pagepatrol.browsers import BrowserNotInstalled
     from pagepatrol.explore import ExploreOptions
     from pagepatrol.explore import explore as run_explore
     from pagepatrol.project import is_project
@@ -760,6 +789,7 @@ def explore(
         confirm=None if yes else _confirm_destructive,
         storage_state=login_state,
         headed=headed,
+        browsers=_browsers(browser),
     )
     try:
         with contextlib.ExitStack() as stack:
@@ -856,11 +886,16 @@ def show_config() -> None:
 @app.command()
 def install(
     with_deps: bool = typer.Option(
-        False, "--with-deps", help="Also install system libraries Chromium needs (Linux)."
+        False, "--with-deps", help="Also install system libraries the browsers need (Linux)."
+    ),
+    browser: list[str] = typer.Option(
+        ["chromium"],
+        "--browser",
+        help="chromium, firefox, webkit (Safari's engine) or all. Repeat or comma-separate.",
     ),
 ) -> None:
-    """Download the Chromium build PagePatrol uses."""
-    cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+    """Download the browsers PagePatrol uses. Chromium by default."""
+    cmd = [sys.executable, "-m", "playwright", "install", *_browsers(browser)]
     if with_deps:
         cmd.append("--with-deps")
     raise typer.Exit(subprocess.call(cmd))
@@ -876,11 +911,14 @@ def format_cost(cost: float | None) -> str:
 
 def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
     console.print()
+    width = max(8, *(len(report.label(r)) for r in report.results))
     for result in report.results:
         vp = result.viewport
         counts = {s: sum(1 for f in result.findings if f.severity == s) for s in Severity}
         parts = [f"[{SEVERITY_STYLE[s]}]{counts[s]} {s.value}[/]" for s in Severity]
-        console.print(f"[bold]{vp.name:<8}[/bold] {vp.width}x{vp.height:<6} " + "  ".join(parts))
+        label = report.label(result)
+        size = f"{vp.width}x{vp.height}"
+        console.print(f"[bold]{label:<{width}}[/bold] {size:<10} " + "  ".join(parts))
 
     console.print(f"[dim]Took {report.duration_s:.0f}s[/dim]")
     if report.llm:
@@ -892,7 +930,7 @@ def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
         )
         for result in report.results:
             if result.review_error:
-                name = result.viewport.name
+                name = report.label(result)
                 console.print(f"[yellow]AI review failed on {name}: {result.review_error}[/]")
 
     groups = group_findings(report)
@@ -913,7 +951,9 @@ def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
             g.check,
             str(g.count),
             g.example if len(g.example) <= 70 else g.example[:67] + "...",
-            ", ".join(g.viewports),
+            "all"
+            if len(report.results) > 2 and len(g.viewports) == len(report.results)
+            else ", ".join(g.viewports),
         )
     console.print()
     console.print(table)

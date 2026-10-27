@@ -50,6 +50,7 @@ class Viewport(BaseModel):
 
 class ViewportResult(BaseModel):
     viewport: Viewport
+    browser: str = "chromium"
     screenshot: str | None = None
     annotated_screenshot: str | None = None
     findings: list[Finding] = ModelField(default_factory=list)
@@ -81,6 +82,12 @@ class CheckReport(BaseModel):
 
     def all_findings(self) -> list[Finding]:
         return [f for r in self.results for f in r.findings]
+
+    def label(self, result: "ViewportResult") -> str:
+        """The viewport's name, with the browser in front when it isn't only Chromium."""
+        if {r.browser for r in self.results} == {"chromium"}:
+            return result.viewport.name
+        return f"{result.browser} {result.viewport.name}"
 
     def count(self, severity: Severity) -> int:
         return sum(1 for f in self.all_findings() if f.severity == severity)
@@ -119,7 +126,7 @@ def group_findings(report: CheckReport) -> list[FindingGroup]:
         for g in group_by_check(result.findings):
             merged = groups.setdefault(g.check, FindingGroup(check=g.check, severity=g.severity))
             merged.findings += g.findings
-            merged.viewports.append(result.viewport.name)
+            merged.viewports.append(report.label(result))
             if g.severity.rank > merged.severity.rank:
                 merged.severity = g.severity
     return sorted(groups.values(), key=lambda g: (-g.severity.rank, -g.count))
@@ -148,6 +155,7 @@ class ScenarioResult(BaseModel):
     name: str
     source: str | None = None
     viewport: Viewport
+    browser: str = "chromium"
     status: str  # passed, failed
     steps: list[StepResult] = ModelField(default_factory=list)
     console: list[ConsoleMessage] = ModelField(default_factory=list)
@@ -166,3 +174,7 @@ class RunReport(BaseModel):
 
     def all_findings(self) -> list[Finding]:
         return [f for s in self.scenarios for f in s.all_findings()]
+
+    @property
+    def browsers(self) -> list[str]:
+        return list(dict.fromkeys(s.browser for s in self.scenarios))

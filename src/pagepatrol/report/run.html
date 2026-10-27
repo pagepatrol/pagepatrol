@@ -16,7 +16,7 @@
   {% if report.scenarios | length > 1 %}
   <nav>
     {% for s in report.scenarios %}
-    <a href="#sc-{{ loop.index }}" class="{{ s.status }}">{{ "✓" if s.status == "passed" else "✗" }} {{ s.name }}</a>
+    <a href="#sc-{{ loop.index }}" class="{{ s.status }}">{{ "✓" if s.status == "passed" else "✗" }} {{ s.name }}{% if report.browsers | length > 1 %} · {{ s.browser }}{% endif %}</a>
     {% endfor %}
   </nav>
   {% endif %}
@@ -24,7 +24,7 @@
   {% for s in report.scenarios %}
   <section class="scenario" id="sc-{{ loop.index }}">
     <h2><span class="status {{ s.status }}">{{ s.status }}</span> {{ s.name }}</h2>
-    <p class="check">{% if s.source %}{{ s.source }} · {% endif %}{{ s.viewport.name }} {{ s.viewport.width }}×{{ s.viewport.height }}</p>
+    <p class="check">{% if s.source %}{{ s.source }} · {% endif %}{{ s.viewport.name }} {{ s.viewport.width }}×{{ s.viewport.height }} · {{ browser_names[s.browser] }}</p>
 
     <ol class="steps">
       {% for step in s.steps %}

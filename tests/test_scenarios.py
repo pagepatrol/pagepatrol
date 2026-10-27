@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from pagepatrol.browsers import BROWSERS
 from pagepatrol.report import write_run_report
 from pagepatrol.runner import RunOptions, is_local, looks_destructive, run_scenarios
 from pagepatrol.scenario import ScenarioError, load_scenarios, parse_step
@@ -34,8 +35,9 @@ steps:
 """
 
 
-def test_scenario_passes_and_checks_every_step(tmp_path):
-    report = run(tmp_path, CONTACT)
+@pytest.mark.parametrize("browser", BROWSERS)
+def test_scenario_passes_and_checks_every_step(tmp_path, browser):
+    report = run(tmp_path, CONTACT, browsers=[browser])
     scenario = report.scenarios[0]
 
     assert scenario.status == "passed", [s.error for s in scenario.steps]

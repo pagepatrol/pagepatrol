@@ -26,5 +26,5 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv run playwright install --with-deps chromium
+      - run: uv run playwright install --with-deps chromium firefox webkit
       - run: uv run pytest

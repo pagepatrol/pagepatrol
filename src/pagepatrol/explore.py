@@ -6,6 +6,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urldefrag, urlparse
@@ -15,7 +16,8 @@ from playwright.async_api import Error as PlaywrightError
 
 from pagepatrol import __version__
 from pagepatrol.agent import replayable_spec, take_snapshot
-from pagepatrol.check import NAVIGATION_TIMEOUT_MS, BrowserNotInstalled, RuntimeCollector
+from pagepatrol.browsers import DEFAULT_BROWSER, context_options, launch
+from pagepatrol.check import NAVIGATION_TIMEOUT_MS, RuntimeCollector
 from pagepatrol.checks import load_js
 from pagepatrol.models import RunReport, ScenarioResult, Severity, StepResult, Viewport
 from pagepatrol.runner import (
@@ -54,6 +56,7 @@ class ExploreOptions:
     confirm: ConfirmFn | None = None
     storage_state: Path | None = None
     headed: bool = False
+    browsers: list[str] = dataclass_field(default_factory=lambda: [DEFAULT_BROWSER])
 
 
 def same_site(url: str, start: str) -> bool:
@@ -72,8 +75,9 @@ def _form_key(form: dict) -> tuple:
 
 
 class _Explorer:
-    def __init__(self, page: Page, start: str, options: ExploreOptions):
+    def __init__(self, page: Page, start: str, options: ExploreOptions, browser: str):
         self.page = page
+        self.browser = browser
         self.start = start
         self.options = options
         self.interact = is_local(start) if options.interact is None else options.interact
@@ -153,9 +157,16 @@ class _Explorer:
     async def explore_page(self, url: str, number: int) -> ScenarioResult:
         path = self._display_path(url)
         result = ScenarioResult(
-            name=path, source=url, viewport=self.options.viewport, status="passed"
+            name=path,
+            source=url,
+            viewport=self.options.viewport,
+            browser=self.browser,
+            status="passed",
         )
-        shots = self.options.out_dir / "screenshots" / f"{number:02d}-{_slug(path)}"
+        folder = f"{number:02d}-{_slug(path)}"
+        if self.options.browsers != [DEFAULT_BROWSER]:
+            folder = f"{self.browser}-{folder}"
+        shots = self.options.out_dir / "screenshots" / folder
         shots.mkdir(parents=True, exist_ok=True)
         console_start = len(self.runtime.console)
 
@@ -291,32 +302,24 @@ class _Explorer:
 async def _explore(start: str, options: ExploreOptions) -> RunReport:
     started = datetime.now(UTC)
     t0 = time.perf_counter()
+    results = []
     async with async_playwright() as p:
-        try:
-            browser: Browser = await p.chromium.launch(headless=not options.headed)
-        except PlaywrightError as exc:
-            if "Executable doesn't exist" in str(exc):
-                raise BrowserNotInstalled(
-                    "Chromium isn't installed yet. Run: pagepatrol install"
-                ) from exc
-            raise
-        vp = options.viewport
-        mobile = vp.width < 1024
-        context = await browser.new_context(
-            viewport={"width": vp.width, "height": vp.height},
-            is_mobile=mobile,
-            has_touch=mobile,
-            storage_state=str(options.storage_state) if options.storage_state else None,
-        )
-        results = []
-        try:
-            page = await context.new_page()
-            explorer = _Explorer(page, start, options)
-            while explorer.queue and len(results) < options.max_pages:
-                url = explorer.queue.popleft()
-                results.append(await explorer.explore_page(url, len(results) + 1))
-        finally:
-            await browser.close()
+        for browser_name in options.browsers:
+            browser: Browser = await launch(p, browser_name, headless=not options.headed)
+            try:
+                context = await browser.new_context(
+                    **context_options(browser_name, options.viewport),
+                    storage_state=str(options.storage_state) if options.storage_state else None,
+                )
+                page = await context.new_page()
+                explorer = _Explorer(page, start, options, browser_name)
+                pages = 0
+                while explorer.queue and pages < options.max_pages:
+                    url = explorer.queue.popleft()
+                    pages += 1
+                    results.append(await explorer.explore_page(url, pages))
+            finally:
+                await browser.close()
 
     return RunReport(
         base_url=start,

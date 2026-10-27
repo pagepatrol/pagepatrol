@@ -4,6 +4,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FunctionLoader, select_autoescape
 
+from pagepatrol.browsers import NAMES
 from pagepatrol.models import CheckReport, RunReport, Severity, group_by_check
 
 
@@ -60,4 +61,5 @@ def write_run_report(report: RunReport, out_dir: Path) -> Path:
         report=report,
         totals=_totals(report.all_findings()),
         passed=sum(1 for s in report.scenarios if s.status == "passed"),
+        browser_names=NAMES,
     )

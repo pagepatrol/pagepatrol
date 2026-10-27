@@ -3,7 +3,7 @@ import contextlib
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -14,7 +14,8 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from pagepatrol import __version__
 from pagepatrol.agent import AgentFailed, achieve
-from pagepatrol.check import NAVIGATION_TIMEOUT_MS, BrowserNotInstalled, RuntimeCollector
+from pagepatrol.browsers import DEFAULT_BROWSER, context_options, launch
+from pagepatrol.check import NAVIGATION_TIMEOUT_MS, RuntimeCollector
 from pagepatrol.checks import install_helpers
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
@@ -65,6 +66,7 @@ class RunOptions:
     recordings: Path | None = None
     # Ignore saved recordings and let the AI redo plain-language steps.
     fresh: bool = False
+    browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
 
 
 def is_local(url: str) -> bool:
@@ -292,23 +294,28 @@ class _PageChecks:
 
 
 async def _run_scenario(
-    browser: Browser, scenario: Scenario, options: RunOptions, recordings: Recordings | None
+    browser: Browser,
+    browser_name: str,
+    scenario: Scenario,
+    options: RunOptions,
+    recordings: Recordings | None,
 ) -> ScenarioResult:
     viewport = parse_viewport(scenario.viewport)
     result = ScenarioResult(
         name=scenario.name,
         source=str(scenario.source) if scenario.source else None,
         viewport=viewport,
+        browser=browser_name,
         status="passed",
     )
-    mobile = viewport.width < 1024
     context = await browser.new_context(
-        viewport={"width": viewport.width, "height": viewport.height},
-        is_mobile=mobile,
-        has_touch=mobile,
+        **context_options(browser_name, viewport),
         storage_state=str(options.storage_state) if options.storage_state else None,
     )
-    shots = options.out_dir / "screenshots" / _slug(scenario.name)
+    folder = _slug(scenario.name)
+    if options.browsers != [DEFAULT_BROWSER]:
+        folder = f"{browser_name}-{folder}"
+    shots = options.out_dir / "screenshots" / folder
     shots.mkdir(parents=True, exist_ok=True)
     runtime = RuntimeCollector()
     checks = _PageChecks()
@@ -381,20 +388,21 @@ async def _run_scenario(
 async def _run(scenarios: list[Scenario], options: RunOptions) -> RunReport:
     started = datetime.now(UTC)
     t0 = time.perf_counter()
+    recordings = Recordings(options.recordings) if options.recordings else None
+    results = []
     async with async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=not options.headed)
-        except PlaywrightError as exc:
-            if "Executable doesn't exist" in str(exc):
-                raise BrowserNotInstalled(
-                    "Chromium isn't installed yet. Run: pagepatrol install"
-                ) from exc
-            raise
-        recordings = Recordings(options.recordings) if options.recordings else None
-        try:
-            results = [await _run_scenario(browser, s, options, recordings) for s in scenarios]
+            # What the AI works out in the first browser is replayed in the others.
+            for browser_name in options.browsers:
+                browser = await launch(p, browser_name, headless=not options.headed)
+                try:
+                    for s in scenarios:
+                        results.append(
+                            await _run_scenario(browser, browser_name, s, options, recordings)
+                        )
+                finally:
+                    await browser.close()
         finally:
-            await browser.close()
             if recordings:
                 recordings.save()
 

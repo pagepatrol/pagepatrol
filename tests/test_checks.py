@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from pagepatrol.browsers import BROWSERS, parse_browsers
 from pagepatrol.check import CheckOptions, run_check
 from pagepatrol.models import CheckReport, Severity
 from pagepatrol.report import write_report
@@ -10,8 +11,10 @@ from pagepatrol.targets import VIEWPORTS
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def check(name: str, tmp_path: Path, viewport: str = "desktop") -> CheckReport:
-    options = CheckOptions(viewports=[VIEWPORTS[viewport]], out_dir=tmp_path)
+def check(
+    name: str, tmp_path: Path, viewport: str = "desktop", browser: str = "chromium"
+) -> CheckReport:
+    options = CheckOptions(viewports=[VIEWPORTS[viewport]], out_dir=tmp_path, browsers=[browser])
     return run_check(str(FIXTURES / name), options)
 
 
@@ -19,9 +22,10 @@ def checks_found(report: CheckReport, min_severity: Severity = Severity.INFO) ->
     return {f.check for f in report.all_findings() if f.severity.rank >= min_severity.rank}
 
 
+@pytest.mark.parametrize("browser", BROWSERS)
 @pytest.mark.parametrize("viewport", ["mobile", "desktop"])
-def test_clean_page_has_no_findings(tmp_path, viewport):
-    report = check("clean.html", tmp_path, viewport)
+def test_clean_page_has_no_findings(tmp_path, viewport, browser):
+    report = check("clean.html", tmp_path, viewport, browser)
     assert report.all_findings() == []
 
 
@@ -39,8 +43,9 @@ def test_clean_page_has_no_findings(tmp_path, viewport):
         ("no_viewport.html", "viewport-meta", Severity.ERROR, "mobile"),
     ],
 )
-def test_detects_problem(tmp_path, fixture, expected, severity, viewport):
-    report = check(fixture, tmp_path, viewport)
+@pytest.mark.parametrize("browser", BROWSERS)
+def test_detects_problem(tmp_path, fixture, expected, severity, viewport, browser):
+    report = check(fixture, tmp_path, viewport, browser)
     matching = [f for f in report.all_findings() if f.check == expected]
     assert matching, f"expected {expected}, got {checks_found(report)}"
     assert matching[0].severity == severity
@@ -51,9 +56,43 @@ def test_overflow_only_on_narrow_screens(tmp_path):
     assert "horizontal-overflow" not in checks_found(report)
 
 
-def test_broken_image_is_reported_once(tmp_path):
-    report = check("broken_image.html", tmp_path)
+@pytest.mark.parametrize("browser", BROWSERS)
+def test_broken_image_is_reported_once(tmp_path, browser):
+    report = check("broken_image.html", tmp_path, browser=browser)
     assert checks_found(report) == {"broken-image"}
+
+
+def test_several_browsers_in_one_report(tmp_path):
+    options = CheckOptions(
+        viewports=[VIEWPORTS["mobile"]], out_dir=tmp_path, browsers=["firefox", "webkit"]
+    )
+    report = run_check(str(FIXTURES / "overflow.html"), options)
+    assert [report.label(r) for r in report.results] == ["firefox mobile", "webkit mobile"]
+    assert {r.screenshot for r in report.results} == {
+        "screenshots/firefox-mobile.png",
+        "screenshots/webkit-mobile.png",
+    }
+    html = write_report(report, tmp_path).read_text(encoding="utf-8")
+    assert "webkit mobile" in html
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([], ["chromium"]),
+        (["safari"], ["webkit"]),
+        (["firefox,chrome"], ["firefox", "chromium"]),
+        (["all"], ["chromium", "firefox", "webkit"]),
+        (["webkit", "all"], ["webkit", "chromium", "firefox"]),
+    ],
+)
+def test_browser_names(values, expected):
+    assert parse_browsers(values) == expected
+
+
+def test_unknown_browser():
+    with pytest.raises(ValueError, match="Unknown browser 'opera'"):
+        parse_browsers(["opera"])
 
 
 def test_intentional_excerpt_is_only_a_note(tmp_path):

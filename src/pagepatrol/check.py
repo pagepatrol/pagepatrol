@@ -11,6 +11,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from pagepatrol import __version__
+from pagepatrol.browsers import DEFAULT_BROWSER, context_options, launch
 from pagepatrol.checks import install_helpers, load_js
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
@@ -33,10 +34,7 @@ from pagepatrol.targets import resolve_target
 NAVIGATION_TIMEOUT_MS = 30_000
 NETWORK_IDLE_TIMEOUT_MS = 5_000
 MAX_CONSOLE_MESSAGES = 200
-
-
-class BrowserNotInstalled(RuntimeError):
-    pass
+RESOURCE_ERRORS = ("Failed to load resource", "Not allowed to load local resource")
 
 
 class PageLoadError(RuntimeError):
@@ -52,6 +50,7 @@ class CheckOptions:
     llm: Client | None = None
     llm_config: LLMConfig | None = None
     depth: Depth = Depth.BALANCED
+    browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
 
 
 @dataclass
@@ -72,8 +71,9 @@ class RuntimeCollector:
             where = f"{loc['url']}:{loc['lineNumber']}" if loc and loc.get("url") else None
             self.console.append(ConsoleMessage(type=msg.type, text=msg.text, location=where))
         # Resource failures also show up as console errors; the network
-        # handlers below report those with better detail.
-        if msg.type == "error" and not msg.text.startswith("Failed to load resource"):
+        # handlers below report those with better detail. The second wording
+        # is WebKit's for a missing local file.
+        if msg.type == "error" and not msg.text.startswith(RESOURCE_ERRORS):
             self.findings.append(
                 Finding(
                     check="console-error",
@@ -194,30 +194,35 @@ def _number_markers(findings: list[Finding]) -> list[dict]:
 
 async def _check_viewport(
     browser: Browser,
+    browser_name: str,
     url: str,
     viewport: Viewport,
     options: CheckOptions,
     with_links: bool,
+    review: bool,
 ) -> ViewportResult:
     mobile = viewport.width < 1024
     context = await browser.new_context(
-        viewport={"width": viewport.width, "height": viewport.height},
-        is_mobile=mobile,
-        has_touch=mobile,
+        **context_options(browser_name, viewport),
         bypass_csp=True,
     )
     try:
         runtime = RuntimeCollector()
         page = await _open(context, url, runtime)
-        result = ViewportResult(viewport=viewport, page_title=await page.title())
+        result = ViewportResult(
+            viewport=viewport, browser=browser_name, page_title=await page.title()
+        )
 
         shots = options.out_dir / "screenshots"
         shots.mkdir(parents=True, exist_ok=True)
-        clean_shot = shots / f"{viewport.name}.png"
+        name = viewport.name
+        if options.browsers != [DEFAULT_BROWSER]:
+            name = f"{browser_name}-{name}"
+        clean_shot = shots / f"{name}.png"
         await page.screenshot(path=clean_shot, full_page=True)
         result.screenshot = clean_shot.relative_to(options.out_dir).as_posix()
         tiles = []
-        if options.llm:
+        if options.llm and review:
             tiles = await _capture_tiles(page, viewport, DEPTHS[options.depth].max_tiles)
 
         await install_helpers(page)
@@ -257,7 +262,7 @@ async def _check_viewport(
         markers = _number_markers(findings)
         if markers:
             await page.evaluate(load_js("js/annotate.js"), markers)
-            annotated = shots / f"{viewport.name}-annotated.png"
+            annotated = shots / f"{name}-annotated.png"
             await page.screenshot(path=annotated, full_page=True)
             result.annotated_screenshot = annotated.relative_to(options.out_dir).as_posix()
 
@@ -271,22 +276,24 @@ async def _check_viewport(
 async def _run(target: str, url: str, options: CheckOptions) -> CheckReport:
     started = datetime.now(UTC)
     t0 = time.perf_counter()
+    results = []
     async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch()
-        except PlaywrightError as exc:
-            if "Executable doesn't exist" in str(exc):
-                raise BrowserNotInstalled(
-                    "Chromium isn't installed yet. Run: pagepatrol install"
-                ) from exc
-            raise
-        try:
-            results = []
-            for i, viewport in enumerate(options.viewports):
-                with_links = options.check_links and i == 0
-                results.append(await _check_viewport(browser, url, viewport, options, with_links))
-        finally:
-            await browser.close()
+        for browser_name in options.browsers:
+            browser = await launch(p, browser_name)
+            try:
+                for viewport in options.viewports:
+                    # Links answer the same whatever the browser, so check them once.
+                    # The AI review also looks at the first browser only: pages look
+                    # nearly the same in each, and reviewing all would multiply the cost.
+                    with_links = options.check_links and not results
+                    review = browser_name == options.browsers[0]
+                    results.append(
+                        await _check_viewport(
+                            browser, browser_name, url, viewport, options, with_links, review
+                        )
+                    )
+            finally:
+                await browser.close()
 
     llm_run = None
     if options.llm:

@@ -16,14 +16,14 @@
   {% if report.results | length > 1 %}
   <nav>
     {% for r in report.results %}
-    <a href="#vp-{{ r.viewport.name }}">{{ r.viewport.name }} · {{ r.findings | length }}</a>
+    <a href="#vp-{{ loop.index }}">{{ report.label(r) }} · {{ r.findings | length }}</a>
     {% endfor %}
   </nav>
   {% endif %}
 
   {% for r in report.results %}
-  <section class="viewport" id="vp-{{ r.viewport.name }}">
-    <h2>{{ r.viewport.name }} <span class="check">{{ r.viewport.width }}×{{ r.viewport.height }}</span></h2>
+  <section class="viewport" id="vp-{{ loop.index }}">
+    <h2>{{ report.label(r) }} <span class="check">{{ r.viewport.width }}×{{ r.viewport.height }}</span></h2>
     <div class="layout">
       <div class="shot">
         {% if r.annotated_screenshot %}
@@ -31,9 +31,9 @@
           <label><input type="radio" name="shot-{{ loop.index }}" checked onchange="this.closest('.shot').querySelector('img').src='{{ r.annotated_screenshot }}'"> marked</label>
           <label><input type="radio" name="shot-{{ loop.index }}" onchange="this.closest('.shot').querySelector('img').src='{{ r.screenshot }}'"> clean</label>
         </div>
-        <img src="{{ r.annotated_screenshot }}" alt="Screenshot at {{ r.viewport.name }} with findings marked" loading="lazy">
+        <img src="{{ r.annotated_screenshot }}" alt="Screenshot at {{ report.label(r) }} with findings marked" loading="lazy">
         {% elif r.screenshot %}
-        <img src="{{ r.screenshot }}" alt="Screenshot at {{ r.viewport.name }}" loading="lazy">
+        <img src="{{ r.screenshot }}" alt="Screenshot at {{ report.label(r) }}" loading="lazy">
         {% endif %}
       </div>
 

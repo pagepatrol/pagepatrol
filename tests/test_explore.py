@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from pagepatrol.browsers import BROWSERS
 from pagepatrol.explore import ExploreOptions, explore, same_site
 from pagepatrol.report import write_run_report
 from pagepatrol.sample import option_for, value_for
@@ -15,8 +18,9 @@ def run(tmp_path, **options):
     )
 
 
-def test_follows_links_presses_buttons_and_sends_forms(tmp_path):
-    report = run(tmp_path)
+@pytest.mark.parametrize("browser", BROWSERS)
+def test_follows_links_presses_buttons_and_sends_forms(tmp_path, browser):
+    report = run(tmp_path, browsers=[browser])
     pages = {s.source.rsplit("/", 1)[-1]: s for s in report.scenarios}
 
     # Same-site pages only; never the logout link or a download.
