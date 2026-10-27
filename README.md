@@ -299,9 +299,38 @@ too.
 | `clipped-text` | warning / info | Text cut off by its container |
 | `small-text` | warning | Text below 12px |
 | `axe/*` | warning / info | WCAG 2.2 A/AA rules from [axe-core](https://github.com/dequelabs/axe-core), including color contrast |
+| `perf/*` | warning / info | Slow loading, layout that jumps, a busy main thread, heavy pages and images far larger than shown (see below) |
 
 Errors mean something is broken. Warnings are real quality problems on a page
 that still works. Notes are worth a look but may be intentional.
+
+### Performance
+
+`check` also measures how fast the page loads and shows the numbers at the
+top of each size in the report:
+
+| | What it means | Good | Poor |
+|---|---|---|---|
+| LCP | when the main content shows up | under 2.5s | over 4s |
+| FCP | when anything shows up | under 1.8s | over 3s |
+| CLS | how much the layout jumps around while loading | under 0.1 | over 0.25 |
+| TBT | how long the page is too busy to respond to a tap | under 200ms | over 600ms |
+| TTFB | how long the server takes to start answering | under 0.8s | over 1.8s |
+
+The limits are Google's, the same ones Lighthouse and PageSpeed Insights use.
+"Poor" becomes a warning, in between a note. Layout jumps point at the
+element that moved, and images that are much larger than they're shown are
+marked on the screenshot.
+
+At phone size in Chromium, the page is loaded the way a mid-range phone on 4G
+would load it (slower network, 4x slower processor), like Lighthouse does.
+That's what makes a fast developer machine show realistic numbers. Turn it
+off with `--no-throttle`, or skip measuring with `--no-perf`. Firefox and
+WebKit can't slow themselves down and can't measure CLS and TBT, so there
+those are shown as "not measured".
+
+On localhost, sizes come from a dev server that sends unminified code, so a
+heavy page is only a note there.
 
 ## Development
 
