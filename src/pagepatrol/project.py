@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -42,6 +43,16 @@ class ProjectError(Exception):
 
 
 @dataclass
+class SetupStep:
+    description: str
+    command: list[str]
+    cwd: Path
+
+    def shell_command(self) -> str:
+        return _join(self.command)
+
+
+@dataclass
 class ServerSpec:
     label: str
     cwd: Path
@@ -51,13 +62,19 @@ class ServerSpec:
     guess_url: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     timeout: float = READY_TIMEOUT_S
+    # What has to happen before the server can start, like installing packages.
+    setup: list[SetupStep] = field(default_factory=list)
 
     def shell_command(self) -> str:
         if isinstance(self.command, str):
             return self.command
-        if sys.platform == "win32":
-            return subprocess.list2cmdline(self.command or [])
-        return shlex.join(self.command or [])
+        return _join(self.command or [])
+
+
+def _join(command: list[str]) -> str:
+    if sys.platform == "win32":
+        return subprocess.list2cmdline(command)
+    return shlex.join(command)
 
 
 def is_project(folder: Path) -> bool:
@@ -120,12 +137,66 @@ def detect(project: Path, command: str | None = None, url: str | None = None) ->
     )
 
 
-def _python(project: Path) -> str:
+def _venv_python(project: Path) -> str | None:
     for venv in (".venv", "venv", "env"):
         for exe in ("Scripts/python.exe", "bin/python"):
             if (project / venv / exe).is_file():
                 return str(project / venv / exe)
-    return "python" if sys.platform == "win32" else "python3"
+    return None
+
+
+def _can_import(python: str, modules: list[str]) -> bool:
+    try:
+        done = subprocess.run(
+            [python, "-c", "import " + ", ".join(modules)], capture_output=True, timeout=30
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
+
+
+def _python(project: Path, modules: list[str]) -> tuple[str, list[SetupStep]]:
+    """The interpreter to run the app with, and what to install first if anything."""
+    venv = _venv_python(project)
+    if venv and _can_import(venv, modules):
+        return venv, []
+    system = "python" if sys.platform == "win32" else "python3"
+    if not venv and _can_import(system, modules):
+        return system, []
+
+    exe = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    python = venv or str(project / ".venv" / exe)
+    if (project / "uv.lock").is_file() and shutil.which("uv"):
+        return python, [SetupStep("Install the packages from uv.lock", ["uv", "sync"], project)]
+
+    steps = []
+    if not venv:
+        steps.append(
+            SetupStep(
+                "Create a separate Python environment for the project in .venv",
+                [sys.executable, "-m", "venv", ".venv"],
+                project,
+            )
+        )
+    # Setup runs inside the project, so a relative path is enough and easier to read.
+    pip = [os.path.relpath(python, project), "-m", "pip", "install"]
+    listed = ""
+    if (project / "requirements.txt").is_file():
+        listed = (project / "requirements.txt").read_text(encoding="utf-8", errors="replace")
+        steps.append(
+            SetupStep(
+                "Install the packages in requirements.txt",
+                [*pip, "-r", "requirements.txt"],
+                project,
+            )
+        )
+    elif (project / "pyproject.toml").is_file():
+        listed = (project / "pyproject.toml").read_text(encoding="utf-8", errors="replace")
+        steps.append(SetupStep("Install the project and its packages", [*pip, "-e", "."], project))
+    missing = [m for m in modules if m not in listed.lower()]
+    if missing:
+        steps.append(SetupStep(f"Install {', '.join(missing)}", [*pip, *missing], project))
+    return python, steps
 
 
 def _django(project: Path, port: int) -> ServerSpec | None:
@@ -135,8 +206,9 @@ def _django(project: Path, port: int) -> ServerSpec | None:
     if not manage:
         return None
     address = f"127.0.0.1:{port}"
-    command = [_python(project), "manage.py", "runserver", address, "--noreload"]
-    return ServerSpec("Django", manage.parent, command, url=f"http://{address}/")
+    python, setup = _python(project, ["django"])
+    command = [python, "manage.py", "runserver", address, "--noreload"]
+    return ServerSpec("Django", manage.parent, command, url=f"http://{address}/", setup=setup)
 
 
 def _npm(project: Path, port: int) -> ServerSpec | None:
@@ -156,9 +228,19 @@ def _npm(project: Path, port: int) -> ServerSpec | None:
         if (project / lock).exists() or (project / lock.replace(".lock", ".lockb")).exists():
             tool = name
             break
+    if not shutil.which(tool):
+        raise ProjectError(_NEEDS.get(tool, f"This project needs {tool}, which isn't installed."))
     deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+    setup = []
     if deps and not (project / "node_modules").is_dir():
-        raise ProjectError(f"Install the dependencies first: cd {project} && {tool} install")
+        install = "ci" if tool == "npm" and (project / "package-lock.json").is_file() else "install"
+        setup.append(
+            SetupStep(
+                "Download the packages listed in package.json into node_modules",
+                [tool, install],
+                project,
+            )
+        )
     guess = next((p for dep, p in DEFAULT_PORTS.items() if dep in deps), 3000)
     pinned = re.search(r"(?:--port|-p)[=\s]+(\d{2,5})", scripts[script])
     if pinned:
@@ -170,6 +252,7 @@ def _npm(project: Path, port: int) -> ServerSpec | None:
         guess_url=f"http://localhost:{guess}/",
         # Create React App and friends open a browser tab unless told not to.
         env={"BROWSER": "none", "NO_COLOR": "1", "FORCE_COLOR": "0"},
+        setup=setup,
     )
 
 
@@ -195,8 +278,9 @@ def _python_app(project: Path, port: int) -> ServerSpec | None:
         if relative.parts[0] == "src":
             cwd, relative = project / "src", relative.relative_to("src")
         module = ".".join(relative.parts)
-        python = _python(project)
-        if found and found[2] == "FastAPI":
+        fastapi = bool(found and found[2] == "FastAPI")
+        python, setup = _python(project, ["fastapi", "uvicorn"] if fastapi else ["flask"])
+        if fastapi:
             command = [python, "-m", "uvicorn", f"{module}:{found[1]}"]
             command += ["--host", "127.0.0.1", "--port", str(port)]
             label = "FastAPI (uvicorn)"
@@ -205,7 +289,7 @@ def _python_app(project: Path, port: int) -> ServerSpec | None:
             command = [python, "-m", "flask", "--app", app, "run"]
             command += ["--host", "127.0.0.1", "--port", str(port)]
             label = "Flask"
-        return ServerSpec(label, cwd, command, url=f"http://127.0.0.1:{port}/")
+        return ServerSpec(label, cwd, command, url=f"http://127.0.0.1:{port}/", setup=setup)
     return None
 
 
@@ -216,6 +300,8 @@ def _dotnet(project: Path, port: int) -> ServerSpec | None:
         text = csproj.read_text(encoding="utf-8", errors="replace")
         if 'Sdk="Microsoft.NET.Sdk.Web"' not in text:
             continue
+        if not shutil.which("dotnet"):
+            raise ProjectError(_NEEDS["dotnet"])
         url = f"http://127.0.0.1:{port}"
         return ServerSpec(
             f"ASP.NET Core ({csproj.name})",
@@ -227,6 +313,49 @@ def _dotnet(project: Path, port: int) -> ServerSpec | None:
             timeout=180,
         )
     return None
+
+
+_NEEDS = {
+    "npm": "This project needs Node.js, which isn't installed. "
+    "Get the LTS version from https://nodejs.org and try again.",
+    "pnpm": "This project uses pnpm, which isn't installed. "
+    "With Node.js installed, run: npm install -g pnpm",
+    "yarn": "This project uses Yarn, which isn't installed. "
+    "With Node.js installed, run: npm install -g yarn",
+    "bun": "This project uses Bun, which isn't installed. See https://bun.sh",
+    "dotnet": "This project needs the .NET SDK, which isn't installed. "
+    "Get it from https://dotnet.microsoft.com/download and try again.",
+}
+
+
+def run_setup(step: SetupStep, on_line=None) -> None:
+    """Run one setup step, passing its output lines along. Raises ProjectError if it fails."""
+    try:
+        process = subprocess.Popen(
+            step.shell_command(),
+            shell=True,
+            cwd=step.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env={**os.environ, "NO_COLOR": "1", "FORCE_COLOR": "0"},
+        )
+    except OSError as exc:
+        raise ProjectError(f"Couldn't run {step.shell_command()}: {exc}") from exc
+    tail: deque[str] = deque(maxlen=30)
+    for line in process.stdout:
+        line = ANSI.sub("", line).rstrip()
+        if line.strip():
+            tail.append(line)
+            if on_line:
+                on_line(line)
+    if process.wait() != 0:
+        raise ProjectError(
+            f"{step.description} failed (exit code {process.returncode})." + _last_lines(tail)
+        )
 
 
 def _static(project: Path, port: int) -> ServerSpec | None:

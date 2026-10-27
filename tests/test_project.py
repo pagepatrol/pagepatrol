@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from pagepatrol import project as project_module
 from pagepatrol.cli import app
 from pagepatrol.project import (
     ProjectError,
     ServerSpec,
+    SetupStep,
     _from_output,
     detect,
     is_project,
@@ -20,6 +22,13 @@ from pagepatrol.project import (
 )
 
 SITE = Path(__file__).parent / "fixtures" / "site"
+
+
+@pytest.fixture(autouse=True)
+def tools_installed(monkeypatch):
+    # Detection shouldn't depend on what this machine happens to have installed.
+    monkeypatch.setattr(project_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(project_module, "_can_import", lambda python, modules: True)
 
 
 def write(path: Path, text: str = "") -> Path:
@@ -50,14 +59,50 @@ def test_npm_lockfile_and_pinned_port(tmp_path):
     (tmp_path / "node_modules").mkdir()
     write(tmp_path / "pnpm-lock.yaml")
     spec = detect(tmp_path)
+    assert spec.setup == []
     assert spec.command == ["pnpm", "run", "start"]
     assert spec.guess_url == "http://localhost:4000/"
 
 
-def test_npm_needs_installed_dependencies(tmp_path):
+def test_npm_offers_to_install_dependencies(tmp_path):
     npm_project(tmp_path, {"dev": "vite"}, {"vite": "^8"})
-    with pytest.raises(ProjectError, match="npm install"):
+    write(tmp_path / "package-lock.json", "{}")
+    spec = detect(tmp_path)
+    assert [s.command for s in spec.setup] == [["npm", "ci"]]
+    assert spec.setup[0].cwd == tmp_path.resolve()
+
+
+def test_npm_installed_dependencies_need_nothing(tmp_path):
+    npm_project(tmp_path, {"dev": "vite"}, {"vite": "^8"})
+    (tmp_path / "node_modules").mkdir()
+    assert detect(tmp_path).setup == []
+
+
+def test_missing_node(tmp_path, monkeypatch):
+    monkeypatch.setattr(project_module.shutil, "which", lambda name: None)
+    npm_project(tmp_path, {"dev": "vite"}, {"vite": "^8"})
+    with pytest.raises(ProjectError, match="nodejs.org"):
         detect(tmp_path)
+
+
+def test_python_app_without_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr(project_module, "_can_import", lambda python, modules: False)
+    write(tmp_path / "main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    write(tmp_path / "requirements.txt", "fastapi\n")
+    spec = detect(tmp_path)
+    steps = [s.command for s in spec.setup]
+    assert steps[0][1:] == ["-m", "venv", ".venv"]
+    assert steps[1][-2:] == ["-r", "requirements.txt"]
+    # uvicorn isn't in requirements.txt but is needed to serve the app.
+    assert steps[2][-1] == "uvicorn"
+    assert ".venv" in spec.command[0]
+
+
+def test_python_app_with_uv_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(project_module, "_can_import", lambda python, modules: False)
+    write(tmp_path / "app.py", "from flask import Flask\napp = Flask(__name__)\n")
+    write(tmp_path / "uv.lock")
+    assert [s.command for s in detect(tmp_path).setup] == [["uv", "sync"]]
 
 
 def test_npm_without_dependencies(tmp_path):
@@ -203,6 +248,41 @@ def test_run_with_start_command_remembers_it(tmp_path):
     result = CliRunner().invoke(app, ["run", str(project), "--start", start, "--fail-on", "never"])
     assert result.exit_code == 0, result.output
     assert load_config(project)["command"] == start
+
+
+def setup_project(tmp_path: Path, monkeypatch) -> Path:
+    project = scenario_project(tmp_path)
+    marker = tmp_path / "installed.txt"
+    step = SetupStep(
+        "Install things",
+        [sys.executable, "-c", f"open(r'{marker}', 'w').write('yes')"],
+        project,
+    )
+    real_detect = project_module.detect
+
+    def detect_with_setup(*args, **kwargs):
+        spec = real_detect(*args, **kwargs)
+        spec.setup = [step]
+        return spec
+
+    monkeypatch.setattr(project_module, "detect", detect_with_setup)
+    return project
+
+
+def test_install_when_allowed(tmp_path, monkeypatch):
+    project = setup_project(tmp_path, monkeypatch)
+    result = CliRunner().invoke(app, ["run", str(project), "--install", "--fail-on", "never"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "installed.txt").read_text() == "yes"
+    assert "Done: Install things" in result.output
+
+
+def test_no_install_shows_the_commands(tmp_path, monkeypatch):
+    project = setup_project(tmp_path, monkeypatch)
+    result = CliRunner().invoke(app, ["run", str(project), "--no-install"])
+    assert result.exit_code == 2
+    assert not (tmp_path / "installed.txt").exists()
+    assert "Run the command(s) above yourself" in result.output
 
 
 def test_run_project_without_scenarios(tmp_path):

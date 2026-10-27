@@ -342,6 +342,11 @@ def run(
         help='Command that starts your dev server, e.g. "npm run dev". '
         "Remembered in .pagepatrol/config.toml.",
     ),
+    install: bool | None = typer.Option(
+        None,
+        "--install/--no-install",
+        help="Install the project's missing packages without asking (or never).",
+    ),
 ) -> None:
     """Run scenarios step by step, checking the page after every step."""
     from pagepatrol.check import BrowserNotInstalled
@@ -401,7 +406,9 @@ def run(
     try:
         with contextlib.ExitStack() as stack:
             if needs_server:
-                options.base_url = stack.enter_context(_dev_server(server_dir, start, base))
+                options.base_url = stack.enter_context(
+                    _dev_server(server_dir, start, base, install)
+                )
             with console.status(f"Running {len(scenarios)} scenario(s)..."):
                 report = run_scenarios(scenarios, options)
     except BrowserNotInstalled as exc:
@@ -433,14 +440,16 @@ def _needs_base_url(scenario) -> bool:
 
 
 @contextlib.contextmanager
-def _dev_server(project: Path, start: str | None, base_url: str | None):
+def _dev_server(project: Path, start: str | None, base_url: str | None, install: bool | None):
     from pagepatrol.project import ProjectError, detect, save_config, serve
 
     try:
         spec = detect(project, start, base_url)
     except ProjectError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise typer.Exit(2) from exc
+    if spec.setup:
+        _set_up(spec.setup, install)
 
     console.print(f"Starting {spec.label} in {spec.cwd}", soft_wrap=True)
     stack = contextlib.ExitStack()
@@ -459,6 +468,46 @@ def _dev_server(project: Path, start: str | None, base_url: str | None):
             yield url
     finally:
         console.print("[dim]Stopped the server.[/dim]")
+
+
+def _set_up(steps, install: bool | None) -> None:
+    from rich.markup import escape
+
+    from pagepatrol.project import ProjectError, run_setup
+
+    console.print("This project's packages aren't installed yet. PagePatrol can do it:")
+    for i, step in enumerate(steps, 1):
+        console.print(f"  {i}. {step.description}")
+        console.print(f"     [dim]{step.shell_command()}[/dim]", soft_wrap=True, highlight=False)
+    if install is None:
+        console.print(
+            "[yellow]This downloads packages from the internet and runs their setup "
+            "scripts on this computer. Only do it for projects you trust.[/yellow]"
+        )
+        try:
+            install = sys.stdin.isatty() and typer.confirm("Install them now?", default=False)
+        except typer.Abort:
+            install = False
+    if not install:
+        console.print(
+            f"Run the command(s) above yourself in {steps[0].cwd}, then try again. "
+            "Or pass --install to let PagePatrol do it.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(2)
+
+    for i, step in enumerate(steps, 1):
+        title = f"{step.description} ({i}/{len(steps)})"
+        with console.status(title) as status:
+            try:
+                run_setup(
+                    step,
+                    lambda line, t=title: status.update(f"{t}\n[dim]{escape(line[:100])}[/dim]"),
+                )
+            except ProjectError as exc:
+                console.print(f"[red]{exc}[/red]", soft_wrap=True, highlight=False)
+                raise typer.Exit(2) from exc
+        console.print(f"[green]Done:[/green] {step.description}")
 
 
 def _confirm_destructive(name: str, url: str) -> bool:
@@ -668,6 +717,11 @@ def explore(
         help='Command that starts your dev server, e.g. "npm run dev". '
         "Remembered in .pagepatrol/config.toml.",
     ),
+    install: bool | None = typer.Option(
+        None,
+        "--install/--no-install",
+        help="Install the project's missing packages without asking (or never).",
+    ),
 ) -> None:
     """Wander through a site without a script: follow links, press buttons, fill forms."""
     from pagepatrol.check import BrowserNotInstalled
@@ -710,7 +764,9 @@ def explore(
     try:
         with contextlib.ExitStack() as stack:
             if project or start_cmd:
-                start = stack.enter_context(_dev_server(project or Path("."), start_cmd, start))
+                start = stack.enter_context(
+                    _dev_server(project or Path("."), start_cmd, start, install)
+                )
             with console.status(f"Exploring {start}..."):
                 report = run_explore(start, options)
     except BrowserNotInstalled as exc:
