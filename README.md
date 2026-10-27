@@ -307,7 +307,9 @@ that still works. Notes are worth a look but may be intentional.
 ### Performance
 
 `check` also measures how fast the page loads and shows the numbers at the
-top of each size in the report:
+top of each size in the report. `run` and `explore` do the same for every
+step that loads a page, opening one or following a link, and print the
+slowest page at the end.
 
 | | What it means | Good | Poor |
 |---|---|---|---|
