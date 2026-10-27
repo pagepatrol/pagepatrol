@@ -149,6 +149,31 @@ values that contain `?`, `:` or `#`, as usual in YAML.
 | `wait` | `wait: 500` or `wait: { text: Loaded }` |
 | `expect` | `expect: Saved`, `expect: { url: /thanks }`, `{ title: ... }`, `{ visible: ... }`, `{ hidden: ... }`, `{ no_text: Error }` |
 
+### Plain-language steps
+
+A step can also be a sentence. The AI model from `pagepatrol init` works out
+the clicks and typing, one action at a time:
+
+```yaml
+name: Buy the cheapest mug
+url: /shop
+steps:
+  - Add the cheapest mug to the cart
+  - Go to checkout and fill in a test address
+  - expect: Order summary
+```
+
+When it gets there, the concrete actions it took are saved to
+`.pagepatrol/recordings.yaml`. Later runs replay those without calling the AI,
+so they cost nothing and give the same result every time. If the page changes
+and a recording stops working, the AI redoes the step and updates it. Use
+`--fresh` to redo all of them, or `--no-llm` to only replay. The recordings
+are plain YAML; you can copy them into the scenario if you'd rather keep
+explicit steps.
+
+A run with AI steps prints how many calls it made and what they cost. Each
+action is one call with a screenshot, about half a cent with Claude Sonnet 5.5.
+
 A file can hold one scenario or a list under `scenarios:`, and each scenario
 can set `viewport: mobile`. A failed step stops its scenario; the rest are
 marked skipped. `run` exits with code 1 if any scenario failed.
