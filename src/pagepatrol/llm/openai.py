@@ -75,7 +75,7 @@ class OpenAIClient:
                 self.usage.add(0, 0)
             choice = response.choices[0]
             if choice.finish_reason == "length":
-                raise LLMError("The review was cut off (hit the output limit).")
+                raise LLMError("The answer was cut off (hit the output limit).")
             return parse_json(choice.message.content or "")
 
         raise LLMError(f"The model server rejected the request: {last_error}")

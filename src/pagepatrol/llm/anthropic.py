@@ -74,9 +74,13 @@ class AnthropicClient:
 
         self.usage.add(response.usage.input_tokens, response.usage.output_tokens)
         if response.stop_reason == "refusal":
-            raise LLMError("The model declined to review this page.")
+            details = getattr(response, "stop_details", None)
+            category = getattr(details, "category", None)
+            raise LLMError(
+                "The model declined the request" + (f" ({category})." if category else ".")
+            )
         if response.stop_reason == "max_tokens":
-            raise LLMError("The review was cut off (hit max_tokens).")
+            raise LLMError("The answer was cut off (hit max_tokens).")
         text = "".join(block.text for block in response.content if block.type == "text")
         return parse_json(text)
 
