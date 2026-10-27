@@ -298,7 +298,9 @@ def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
 @app.command()
 def run(
     paths: list[Path] = typer.Argument(
-        None, help="Scenario files or folders. Default: .pagepatrol/scenarios"
+        None,
+        help="Scenario files or folders, or a project folder to start and test. "
+        "Default: .pagepatrol/scenarios",
     ),
     base_url: str | None = typer.Option(
         None, "--base-url", "-b", help="Where relative scenario URLs point, e.g. localhost:3000."
@@ -334,15 +336,34 @@ def run(
     fresh: bool = typer.Option(
         False, "--fresh", help="Ignore recorded steps and have the AI redo plain-language steps."
     ),
+    start: str | None = typer.Option(
+        None,
+        "--start",
+        help='Command that starts your dev server, e.g. "npm run dev". '
+        "Remembered in .pagepatrol/config.toml.",
+    ),
 ) -> None:
     """Run scenarios step by step, checking the page after every step."""
     from pagepatrol.check import BrowserNotInstalled
+    from pagepatrol.project import is_project
     from pagepatrol.report import write_run_report
     from pagepatrol.runner import RunOptions, run_scenarios
     from pagepatrol.scenario import ScenarioError, load_scenarios
     from pagepatrol.targets import resolve_target
 
-    paths = paths or [Path(".pagepatrol") / "scenarios"]
+    project = paths[0] if paths and len(paths) == 1 and is_project(paths[0]) else None
+    home = (project or Path(".")) / ".pagepatrol"
+    if project:
+        paths = [home / "scenarios"]
+        if not any(paths[0].rglob("*.y*ml")):
+            console.print(
+                f"No scenarios in {paths[0]} yet. Let the AI suggest some with "
+                f"[bold]pagepatrol plan {project}[/bold], or look around without any: "
+                f"[bold]pagepatrol explore {project}[/bold]",
+                soft_wrap=True,
+            )
+            raise typer.Exit(2)
+    paths = paths or [home / "scenarios"]
     try:
         scenarios = [s for p in paths for s in load_scenarios(p)]
         base = resolve_target(base_url) if base_url else None
@@ -350,19 +371,19 @@ def run(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
 
-    default_state = Path(".pagepatrol") / "auth.json"
+    default_state = home / "auth.json"
     if login_state is None and default_state.exists():
         login_state = default_state
         console.print(f"[dim]Using the saved login in {default_state}[/dim]")
 
-    out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir = out or home / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
     options = RunOptions(
         out_dir=out_dir,
         base_url=base,
         storage_state=login_state,
         confirm=None if yes else _confirm_destructive,
         headed=headed,
-        recordings=Path(".pagepatrol") / "recordings.yaml",
+        recordings=home / "recordings.yaml",
         fresh=fresh,
     )
     plain = any(step.action == "do" for s in scenarios for step in s.steps)
@@ -370,9 +391,19 @@ def run(
         options.llm, options.llm_config = _llm_client(
             required=llm is True or fresh, tip="let the AI do plain-language steps"
         )
+
+    server_dir = project or Path(".")
+    needs_server = start is not None or (
+        base is None
+        and any(_needs_base_url(s) for s in scenarios)
+        and (project is not None or is_project(server_dir))
+    )
     try:
-        with console.status(f"Running {len(scenarios)} scenario(s)..."):
-            report = run_scenarios(scenarios, options)
+        with contextlib.ExitStack() as stack:
+            if needs_server:
+                options.base_url = stack.enter_context(_dev_server(server_dir, start, base))
+            with console.status(f"Running {len(scenarios)} scenario(s)..."):
+                report = run_scenarios(scenarios, options)
     except BrowserNotInstalled as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
@@ -392,6 +423,42 @@ def run(
     )
     if failed or too_many:
         raise typer.Exit(1)
+
+
+def _needs_base_url(scenario) -> bool:
+    url = scenario.url
+    if url is None and scenario.steps and scenario.steps[0].action == "goto":
+        url = scenario.steps[0].value
+    return not (isinstance(url, str) and url.startswith(("http://", "https://", "file://")))
+
+
+@contextlib.contextmanager
+def _dev_server(project: Path, start: str | None, base_url: str | None):
+    from pagepatrol.project import ProjectError, detect, save_config, serve
+
+    try:
+        spec = detect(project, start, base_url)
+    except ProjectError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    console.print(f"Starting {spec.label} in {spec.cwd}", soft_wrap=True)
+    stack = contextlib.ExitStack()
+    try:
+        with console.status("Waiting for the server to answer..."):
+            url = stack.enter_context(serve(spec))
+    except ProjectError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(2) from exc
+    try:
+        with stack:
+            console.print(f"[dim]Server is up at {url}[/dim]")
+            if start:
+                saved = save_config(project, start, base_url)
+                console.print(f"[dim]Remembered the start command in {saved}[/dim]")
+            yield url
+    finally:
+        console.print("[dim]Stopped the server.[/dim]")
 
 
 def _confirm_destructive(name: str, url: str) -> bool:
@@ -442,8 +509,11 @@ def _print_run_summary(report, labels: tuple[str, str] = ("PASS", "FAIL")) -> No
 @app.command()
 def plan(
     project: Path = typer.Argument(Path("."), help="The project folder to read."),
-    out: Path = typer.Option(
-        Path(".pagepatrol") / "scenarios", "--out", "-o", help="Where to save the scenarios."
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Where to save the scenarios. Default: .pagepatrol/scenarios in the project.",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Don't ask before sending code or saving scenarios."
@@ -466,6 +536,7 @@ def plan(
     if not project.is_dir():
         console.print(f"[red]{project} is not a folder.[/red]")
         raise typer.Exit(2)
+    out = out or project / ".pagepatrol" / "scenarios"
     client, config = _llm_client(required=True)
 
     with console.status("Reading the project..."):
@@ -538,8 +609,9 @@ def plan(
 
     for path in write_scenarios(chosen, out):
         console.print(f"Saved {path}")
+    command = "pagepatrol run" + ("" if project.resolve() == Path.cwd() else f" {project}")
     console.print(
-        "\nRun them with: [bold]pagepatrol run --base-url <your site>[/bold]\n"
+        f"\nRun them with: [bold]{command}[/bold]\n"
         "[dim]The AI does the plain-language steps the first time and records them; "
         "later runs replay without it.[/dim]"
     )
@@ -559,7 +631,9 @@ def _pick(answer: str, items: list) -> list:
 
 @app.command()
 def explore(
-    url: str = typer.Argument(..., help="Where to start, e.g. localhost:3000."),
+    url: str = typer.Argument(
+        ..., help="Where to start, e.g. localhost:3000, or a project folder to start and explore."
+    ),
     max_pages: int = typer.Option(15, "--max-pages", help="Stop after this many pages."),
     interact: bool | None = typer.Option(
         None,
@@ -588,33 +662,42 @@ def explore(
     open_report: bool = typer.Option(
         False, "--open", help="Open the report in a browser when done."
     ),
+    start_cmd: str | None = typer.Option(
+        None,
+        "--start",
+        help='Command that starts your dev server, e.g. "npm run dev". '
+        "Remembered in .pagepatrol/config.toml.",
+    ),
 ) -> None:
     """Wander through a site without a script: follow links, press buttons, fill forms."""
     from pagepatrol.check import BrowserNotInstalled
     from pagepatrol.explore import ExploreOptions
     from pagepatrol.explore import explore as run_explore
+    from pagepatrol.project import is_project
     from pagepatrol.report import write_run_report
     from pagepatrol.runner import is_local
     from pagepatrol.targets import resolve_target
 
+    project = Path(url) if is_project(Path(url)) else None
+    home = (project or Path(".")) / ".pagepatrol"
     try:
-        start = resolve_target(url)
+        start = None if project else resolve_target(url)
         vp = parse_viewport(viewport)
     except TargetError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
 
-    default_state = Path(".pagepatrol") / "auth.json"
+    default_state = home / "auth.json"
     if login_state is None and default_state.exists():
         login_state = default_state
         console.print(f"[dim]Using the saved login in {default_state}[/dim]")
-    if interact is None and not is_local(start):
+    if interact is None and start and not is_local(start):
         console.print(
             "[dim]Only following links on this site. Pass --interact to also press "
             "buttons and send forms with test data.[/dim]"
         )
 
-    out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir = out or home / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
     options = ExploreOptions(
         out_dir=out_dir,
         viewport=vp,
@@ -625,8 +708,11 @@ def explore(
         headed=headed,
     )
     try:
-        with console.status(f"Exploring {start}..."):
-            report = run_explore(start, options)
+        with contextlib.ExitStack() as stack:
+            if project or start_cmd:
+                start = stack.enter_context(_dev_server(project or Path("."), start_cmd, start))
+            with console.status(f"Exploring {start}..."):
+                report = run_explore(start, options)
     except BrowserNotInstalled as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
