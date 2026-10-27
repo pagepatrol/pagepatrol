@@ -403,16 +403,25 @@ def _confirm_destructive(name: str, url: str) -> bool:
     )
 
 
-def _print_run_summary(report) -> None:
+def _print_run_summary(report, labels: tuple[str, str] = ("PASS", "FAIL")) -> None:
     console.print()
+    width = max(len(label) for label in labels)
     for s in report.scenarios:
-        mark = "[green]PASS[/]" if s.status == "passed" else "[red]FAIL[/]"
+        ok, bad = (label.ljust(width) for label in labels)
+        mark = f"[green]{ok}[/]" if s.status == "passed" else f"[red]{bad}[/]"
         done = sum(1 for step in s.steps if step.status == "passed")
         console.print(f"{mark}  {s.name} [dim]({done}/{len(s.steps)} steps)[/dim]")
         failed = next((step for step in s.steps if step.status == "failed"), None)
         if failed:
             console.print(f"      step {failed.index + 1}: {failed.description}")
             console.print(f"      [red]{failed.error}[/red]", soft_wrap=True)
+        elif s.status == "failed":
+            for step in s.steps:
+                error = next((f for f in step.findings if f.severity == Severity.ERROR), None)
+                if error:
+                    console.print(
+                        f"      {step.description}: [red]{error.message}[/red]", soft_wrap=True
+                    )
     findings = report.all_findings()
     counts = {sev: sum(1 for f in findings if f.severity == sev) for sev in Severity}
     parts = [f"[{SEVERITY_STYLE[sev]}]{counts[sev]} {sev.value}[/]" for sev in Severity]
@@ -546,6 +555,94 @@ def _pick(answer: str, items: list) -> list:
         if part.isdigit() and 1 <= int(part) <= len(items) and items[int(part) - 1] not in picked:
             picked.append(items[int(part) - 1])
     return picked
+
+
+@app.command()
+def explore(
+    url: str = typer.Argument(..., help="Where to start, e.g. localhost:3000."),
+    max_pages: int = typer.Option(15, "--max-pages", help="Stop after this many pages."),
+    interact: bool | None = typer.Option(
+        None,
+        "--interact/--no-interact",
+        help="Click buttons and send forms with test data. On by default only for "
+        "localhost and local files.",
+    ),
+    viewport: str = typer.Option(
+        "desktop", "--viewport", "-v", help="mobile, tablet, desktop or WxH."
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Where to write the report. Default: .pagepatrol/runs/<time>"
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Don't ask before clicking things that look permanent."
+    ),
+    login_state: Path | None = typer.Option(
+        None,
+        "--login-state",
+        help="Saved login from `pagepatrol login`. Default: .pagepatrol/auth.json if it exists.",
+    ),
+    headed: bool = typer.Option(False, "--headed", help="Show the browser while it runs."),
+    fail_on: FailOn = typer.Option(
+        FailOn.ERROR, "--fail-on", help="Exit with code 1 when findings of this level exist."
+    ),
+    open_report: bool = typer.Option(
+        False, "--open", help="Open the report in a browser when done."
+    ),
+) -> None:
+    """Wander through a site without a script: follow links, press buttons, fill forms."""
+    from pagepatrol.check import BrowserNotInstalled
+    from pagepatrol.explore import ExploreOptions
+    from pagepatrol.explore import explore as run_explore
+    from pagepatrol.report import write_run_report
+    from pagepatrol.runner import is_local
+    from pagepatrol.targets import resolve_target
+
+    try:
+        start = resolve_target(url)
+        vp = parse_viewport(viewport)
+    except TargetError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    default_state = Path(".pagepatrol") / "auth.json"
+    if login_state is None and default_state.exists():
+        login_state = default_state
+        console.print(f"[dim]Using the saved login in {default_state}[/dim]")
+    if interact is None and not is_local(start):
+        console.print(
+            "[dim]Only following links on this site. Pass --interact to also press "
+            "buttons and send forms with test data.[/dim]"
+        )
+
+    out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    options = ExploreOptions(
+        out_dir=out_dir,
+        viewport=vp,
+        max_pages=max_pages,
+        interact=interact,
+        confirm=None if yes else _confirm_destructive,
+        storage_state=login_state,
+        headed=headed,
+    )
+    try:
+        with console.status(f"Exploring {start}..."):
+            report = run_explore(start, options)
+    except BrowserNotInstalled as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    report_path = write_run_report(report, out_dir)
+    _print_run_summary(report, labels=("ok", "issues"))
+    console.print(f"[dim]Visited {len(report.scenarios)} page(s).[/dim]")
+    console.print(f"\nReport: [bold]{report_path.resolve()}[/bold]", soft_wrap=True)
+    if open_report:
+        webbrowser.open(report_path.resolve().as_uri())
+
+    threshold = {FailOn.ERROR: Severity.ERROR.rank, FailOn.WARNING: Severity.WARNING.rank}.get(
+        fail_on
+    )
+    if threshold is not None and any(f.severity.rank >= threshold for f in report.all_findings()):
+        raise typer.Exit(1)
 
 
 @app.command()

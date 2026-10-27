@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explore demo</title>
+<style>body { font: 16px/1.5 sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }</style>
+</head>
+<body>
+<main>
+<h1>Explore demo</h1>
+<nav>
+  <a href="about.html">About</a>
+  <a href="missing.html">Old page</a>
+  <a href="logout.html">Log out</a>
+  <a href="brochure.pdf">Brochure</a>
+  <a href="https://example.com/">Elsewhere</a>
+</nav>
+<p>
+  <button type="button" id="details">Show details</button>
+  <button type="button" id="more">Load more</button>
+  <button type="button" id="wipe">Delete everything</button>
+</p>
+<p id="out" hidden>Details are here.</p>
+<form id="news">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" required>
+  <label for="topic">Topic</label>
+  <select id="topic" name="topic">
+    <option value="">Choose one</option>
+    <option value="news">News</option>
+  </select>
+  <button type="submit">Subscribe</button>
+</form>
+<p id="status"></p>
+<script>
+  document.getElementById("details").addEventListener("click", () => {
+    document.getElementById("out").hidden = false;
+  });
+  document.getElementById("more").addEventListener("click", () => {
+    const list = null;
+    list.append("item");
+  });
+  document.getElementById("wipe").addEventListener("click", () => {
+    document.title = "WIPED";
+  });
+  document.getElementById("news").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.target);
+    document.getElementById("status").textContent = `Subscribed ${data.get("email")} to ${data.get("topic")}`;
+    window.subscribed.push(data.get("email"));
+  });
+</script>
+</main>
+</body>
+</html>
