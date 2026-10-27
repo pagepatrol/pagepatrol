@@ -33,6 +33,24 @@ pagepatrol check localhost:3000 -v mobile -v tablet -v 1440x900
 It exits with code 1 when it finds errors, so it can gate a CI job. Use
 `--fail-on warning` to be stricter or `--fail-on never` to only report.
 
+### Browsers
+
+Chromium is the default. Firefox and WebKit, the engine behind Safari, work
+too, with every check, scenario and `explore`:
+
+```sh
+pagepatrol install --browser all          # one-time: download Firefox and WebKit as well
+pagepatrol check localhost:3000 --browser firefox --browser safari
+pagepatrol run ./my-app --browser all
+```
+
+The report shows each browser side by side. Plain-language steps are worked
+out by the AI once, in the first browser, and replayed in the others. The AI
+review of screenshots also looks at the first browser only, so adding
+browsers doesn't multiply the cost. Firefox can't pretend to be a phone
+browser, so at phone size it shows the page in a narrow desktop window;
+layout problems still show up the same way.
+
 ## AI review (optional)
 
 ```sh
