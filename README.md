@@ -174,6 +174,25 @@ explicit steps.
 A run with AI steps prints how many calls it made and what they cost. Each
 action is one call with a screenshot, about half a cent with Claude Sonnet 5.5.
 
+### Scenarios from your code
+
+Don't want to write them yourself? Let the AI read the project:
+
+```sh
+pagepatrol plan ./my-app
+```
+
+It works with any language or framework. It reads the source files (respecting
+`.gitignore`), tells you how many files it will send and roughly what that
+costs, and asks before sending. Files like `.env`, keys and credentials are
+never sent, and values that look like passwords or tokens are masked. It
+then lists the scenarios it suggests; you pick which ones to save to
+`.pagepatrol/scenarios/`. They use plain-language steps, so the first
+`pagepatrol run` lets the AI do them and records the result.
+
+On the demo app in this repo, planning cost about $0.01 and the first run of
+the five planned scenarios about $0.12; runs after that replay for free.
+
 A file can hold one scenario or a list under `scenarios:`, and each scenario
 can set `viewport: mobile`. A failed step stops its scenario; the rest are
 marked skipped. `run` exits with code 1 if any scenario failed.
