@@ -127,7 +127,7 @@ def check(
         raise typer.Exit(1)
 
 
-def _llm_client(required: bool):
+def _llm_client(required: bool, tip: str = "add an AI review of the screenshots"):
     from pagepatrol.config import load_llm_config
     from pagepatrol.llm import create_client
     from pagepatrol.llm.providers import LLMNotConfigured
@@ -137,9 +137,7 @@ def _llm_client(required: bool):
         if required:
             console.print("[red]No AI model set up yet. Run: pagepatrol init[/red]")
             raise typer.Exit(2)
-        console.print(
-            "[dim]Tip: run `pagepatrol init` to add an AI review of the screenshots.[/dim]"
-        )
+        console.print(f"[dim]Tip: run `pagepatrol init` to {tip}.[/dim]")
         return None, None
     try:
         return create_client(config), config
@@ -147,7 +145,7 @@ def _llm_client(required: bool):
         if required:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(2) from exc
-        console.print(f"[yellow]Skipping AI review: {exc}[/yellow]")
+        console.print(f"[yellow]Not using AI: {exc}[/yellow]")
         return None, None
 
 
@@ -327,6 +325,14 @@ def run(
     open_report: bool = typer.Option(
         False, "--open", help="Open the report in a browser when done."
     ),
+    llm: bool | None = typer.Option(
+        None,
+        "--llm/--no-llm",
+        help="Let the AI do plain-language steps that have no recording yet.",
+    ),
+    fresh: bool = typer.Option(
+        False, "--fresh", help="Ignore recorded steps and have the AI redo plain-language steps."
+    ),
 ) -> None:
     """Run scenarios step by step, checking the page after every step."""
     from pagepatrol.check import BrowserNotInstalled
@@ -355,7 +361,14 @@ def run(
         storage_state=login_state,
         confirm=None if yes else _confirm_destructive,
         headed=headed,
+        recordings=Path(".pagepatrol") / "recordings.yaml",
+        fresh=fresh,
     )
+    plain = any(step.action == "do" for s in scenarios for step in s.steps)
+    if plain and llm is not False:
+        options.llm, options.llm_config = _llm_client(
+            required=llm is True or fresh, tip="let the AI do plain-language steps"
+        )
     try:
         with console.status(f"Running {len(scenarios)} scenario(s)..."):
             report = run_scenarios(scenarios, options)
@@ -404,6 +417,16 @@ def _print_run_summary(report) -> None:
     parts = [f"[{SEVERITY_STYLE[sev]}]{counts[sev]} {sev.value}[/]" for sev in Severity]
     console.print("\nFindings along the way: " + "  ".join(parts))
     console.print(f"[dim]Took {report.duration_s:.0f}s[/dim]")
+    if report.llm:
+        llm = report.llm
+        console.print(
+            f"[dim]AI steps: {llm.model}, {llm.calls} call(s), "
+            f"{llm.input_tokens:,} in / {llm.output_tokens:,} out tokens, "
+            f"{format_cost(llm.cost_usd)}[/dim]"
+        )
+    replayed = sum(1 for s in report.scenarios for step in s.steps if step.via == "recording")
+    if replayed:
+        console.print(f"[dim]Replayed {replayed} recorded step(s) without the AI.[/dim]")
 
 
 @app.command()

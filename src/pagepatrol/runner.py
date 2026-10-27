@@ -13,13 +13,18 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from pagepatrol import __version__
+from pagepatrol.agent import AgentFailed, achieve
 from pagepatrol.check import NAVIGATION_TIMEOUT_MS, BrowserNotInstalled, RuntimeCollector
 from pagepatrol.checks import install_helpers
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
+from pagepatrol.config import LLMConfig
+from pagepatrol.llm import Client
+from pagepatrol.llm.pricing import estimate_cost, prices_for
 from pagepatrol.locate import TargetNotFound, accessible_name, resolve
-from pagepatrol.models import Finding, RunReport, ScenarioResult, StepResult
-from pagepatrol.scenario import Scenario, Step
+from pagepatrol.models import Finding, LLMRun, RunReport, ScenarioResult, StepResult
+from pagepatrol.recordings import Recordings
+from pagepatrol.scenario import Scenario, ScenarioError, Step, parse_step
 from pagepatrol.targets import parse_viewport
 
 ACTION_TIMEOUT_MS = 10_000
@@ -43,6 +48,10 @@ class StepFailed(Exception):
     pass
 
 
+class NotConfirmed(StepFailed):
+    """The user said no to a risky click. Nothing should try another way round."""
+
+
 @dataclass
 class RunOptions:
     out_dir: Path
@@ -50,6 +59,12 @@ class RunOptions:
     storage_state: Path | None = None
     confirm: ConfirmFn | None = None
     headed: bool = False
+    llm: Client | None = None
+    llm_config: LLMConfig | None = None
+    # Where the concrete steps for plain-language steps are kept.
+    recordings: Path | None = None
+    # Ignore saved recordings and let the AI redo plain-language steps.
+    fresh: bool = False
 
 
 def is_local(url: str) -> bool:
@@ -129,7 +144,7 @@ async def _perform(page: Page, step: Step, options: RunOptions) -> dict | None:
     if step.action == "click" and options.confirm and not is_local(page.url):
         name = await accessible_name(locator)
         if looks_destructive(name) and not options.confirm(name, page.url):
-            raise StepFailed(
+            raise NotConfirmed(
                 f"Stopped before clicking {name!r} on {page.url}: it may not be undoable. "
                 "Confirm when asked, or pass --yes."
             )
@@ -169,16 +184,81 @@ async def _perform(page: Page, step: Step, options: RunOptions) -> dict | None:
                     await _wait_for(page, step.value, EXPECT_TIMEOUT_MS)
                 except (PlaywrightTimeout, TargetNotFound) as exc:
                     raise StepFailed(_describe_failure(step, page)) from exc
-            case "do":
-                raise StepFailed(
-                    "Plain-language steps need the AI executor, which isn't available yet. "
-                    "Write this step with click/fill/expect for now."
-                )
     except PlaywrightTimeout as exc:
         raise StepFailed(f"Timed out: {str(exc).splitlines()[0]}") from exc
     except PlaywrightError as exc:
         raise StepFailed(str(exc).splitlines()[0]) from exc
     return resolved
+
+
+@dataclass
+class _DoResult:
+    actions: list[str]
+    via: str
+    note: str | None = None
+
+
+async def _do(
+    page: Page,
+    step: Step,
+    scenario: Scenario,
+    done_before: list[str],
+    options: RunOptions,
+    recordings: Recordings | None,
+) -> _DoResult:
+    """Run a plain-language step: replay its recording if there is one,
+    otherwise let the AI do it and record what worked."""
+    goal = str(step.value)
+    replayed: list[Step] = []
+    note = None
+
+    recorded = recordings.get(scenario.name, goal) if recordings and not options.fresh else None
+    if recorded:
+        try:
+            for i, raw in enumerate(recorded):
+                concrete = parse_step(raw, f"recording for {goal!r}, step {i + 1}")
+                await _perform(page, concrete, options)
+                await _settle(page)
+                replayed.append(concrete)
+            return _DoResult([s.describe() for s in replayed], "recording")
+        except NotConfirmed:
+            raise
+        except (StepFailed, ScenarioError) as exc:
+            if options.llm is None:
+                raise StepFailed(
+                    f"The recorded steps for this no longer work: {exc} "
+                    "Set up an AI model with `pagepatrol init` to redo them, "
+                    "or write this step with click/fill/expect."
+                ) from exc
+            note = f"The recording stopped working ({exc}), so the AI took over."
+
+    if options.llm is None:
+        raise StepFailed(
+            "This step is in plain language, so it needs an AI model the first time. "
+            "Run `pagepatrol init`, or write it with click/fill/expect."
+        )
+
+    async def attempt(concrete: Step) -> str | None:
+        try:
+            await _perform(page, concrete, options)
+            await _settle(page)
+        except NotConfirmed:
+            raise
+        except StepFailed as exc:
+            return str(exc)
+        return None
+
+    try:
+        outcome = await achieve(
+            page, goal, options.llm, attempt, scenario=scenario.name, done_before=done_before
+        )
+    except AgentFailed as exc:
+        raise StepFailed(str(exc)) from exc
+
+    steps = replayed + outcome.steps
+    if recordings is not None and steps:
+        recordings.put(scenario.name, goal, [s.raw for s in steps])
+    return _DoResult([s.describe() for s in steps], "ai", note)
 
 
 class _PageChecks:
@@ -212,7 +292,7 @@ class _PageChecks:
 
 
 async def _run_scenario(
-    browser: Browser, scenario: Scenario, options: RunOptions
+    browser: Browser, scenario: Scenario, options: RunOptions, recordings: Recordings | None
 ) -> ScenarioResult:
     viewport = parse_viewport(scenario.viewport)
     result = ScenarioResult(
@@ -259,8 +339,15 @@ async def _run_scenario(
             before = len(runtime.findings)
             t0 = time.perf_counter()
             try:
-                step_result.resolved = await _perform(page, step, options)
-                await _settle(page)
+                if step.action == "do":
+                    done_before = [s.description for s in result.steps[:-1]]
+                    outcome = await _do(page, step, scenario, done_before, options, recordings)
+                    step_result.actions = outcome.actions
+                    step_result.via = outcome.via
+                    step_result.note = outcome.note
+                else:
+                    step_result.resolved = await _perform(page, step, options)
+                    await _settle(page)
             except StepFailed as exc:
                 step_result.status = "failed"
                 step_result.error = str(exc)
@@ -303,10 +390,26 @@ async def _run(scenarios: list[Scenario], options: RunOptions) -> RunReport:
                     "Chromium isn't installed yet. Run: pagepatrol install"
                 ) from exc
             raise
+        recordings = Recordings(options.recordings) if options.recordings else None
         try:
-            results = [await _run_scenario(browser, s, options) for s in scenarios]
+            results = [await _run_scenario(browser, s, options, recordings) for s in scenarios]
         finally:
             await browser.close()
+            if recordings:
+                recordings.save()
+
+    llm_run = None
+    if options.llm and options.llm.usage.calls:
+        usage = options.llm.usage
+        prices = prices_for(options.llm_config) if options.llm_config else None
+        llm_run = LLMRun(
+            provider=options.llm_config.provider if options.llm_config else "unknown",
+            model=options.llm.model,
+            calls=usage.calls,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=estimate_cost(prices, usage.input_tokens, usage.output_tokens),
+        )
 
     return RunReport(
         base_url=options.base_url,
@@ -314,6 +417,7 @@ async def _run(scenarios: list[Scenario], options: RunOptions) -> RunReport:
         started_at=started,
         duration_s=round(time.perf_counter() - t0, 2),
         scenarios=results,
+        llm=llm_run,
     )
 
 

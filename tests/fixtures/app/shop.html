@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Products</title>
+<style>
+  body { font: 16px/1.5 sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }
+  ul { list-style: none; padding: 0; }
+  li { margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Products</h1>
+<p id="cart">Cart: 0 items</p>
+<ul>
+  <li>Blue mug <span>$12</span> <button type="button" data-name="Blue mug">Add to cart</button></li>
+  <li>Green cup <span>$4</span> <button type="button" data-name="Green cup">Add to cart</button></li>
+  <li>Red plate <span>$9</span> <button type="button" data-name="Red plate">Add to cart</button></li>
+</ul>
+<p id="status"></p>
+<script>
+  let count = 0;
+  for (const button of document.querySelectorAll("button[data-name]")) {
+    button.addEventListener("click", () => {
+      count += 1;
+      document.getElementById("cart").textContent = `Cart: ${count} item${count === 1 ? "" : "s"}`;
+      document.getElementById("status").textContent = `Added ${button.dataset.name} to your cart`;
+    });
+  }
+</script>
+</main>
+</body>
+</html>

@@ -62,7 +62,7 @@ class ViewportResult(BaseModel):
 class LLMRun(BaseModel):
     provider: str
     model: str
-    depth: str
+    depth: str | None = None
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -136,6 +136,11 @@ class StepResult(BaseModel):
     duration_ms: int = 0
     # How the target was actually found, so the step can be replayed exactly.
     resolved: dict[str, Any] | None = None
+    # For plain-language steps: what was actually done, and whether the AI
+    # did it ("ai") or a saved recording was replayed ("recording").
+    actions: list[str] = ModelField(default_factory=list)
+    via: str | None = None
+    note: str | None = None
     findings: list[Finding] = ModelField(default_factory=list)
 
 
@@ -157,6 +162,7 @@ class RunReport(BaseModel):
     started_at: datetime
     duration_s: float
     scenarios: list[ScenarioResult]
+    llm: LLMRun | None = None
 
     def all_findings(self) -> list[Finding]:
         return [f for s in self.scenarios for f in s.all_findings()]

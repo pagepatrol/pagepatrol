@@ -97,11 +97,6 @@ def test_missing_target_is_a_clear_failure(tmp_path):
     assert "Couldn't find 'Checkout'" in step.error
 
 
-def test_plain_language_steps_need_the_ai(tmp_path):
-    report = run(tmp_path, "steps:\n  - Buy the cheapest item\n")
-    assert "AI executor" in report.scenarios[0].steps[1].error
-
-
 def test_no_confirmation_needed_on_local_pages(tmp_path):
     asked = []
     report = run(

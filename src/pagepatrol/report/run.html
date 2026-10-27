@@ -32,8 +32,15 @@
         <div class="step-head">
           <span class="status {{ step.status }}">{{ step.status }}</span>
           <strong>{{ step.description }}</strong>
+          {% if step.via == "ai" %}<span class="ai">AI</span>{% elif step.via == "recording" %}<span class="ai">replayed</span>{% endif %}
           <span class="check">{{ step.duration_ms }} ms</span>
         </div>
+        {% if step.actions %}
+        <ol class="actions">
+          {% for a in step.actions %}<li>{{ a }}</li>{% endfor %}
+        </ol>
+        {% endif %}
+        {% if step.note %}<div class="meta">{{ step.note }}</div>{% endif %}
         {% if step.error %}<div class="step-error">{{ step.error }}</div>{% endif %}
         {% if step.screenshot or step.findings %}
         <div class="step-body">
@@ -77,6 +84,7 @@
   {% endfor %}
 
   <footer>
+    {% if report.llm %}AI steps by {{ report.llm.model }} ({{ report.llm.calls }} call{{ "" if report.llm.calls == 1 else "s" }}, {{ "{:,}".format(report.llm.input_tokens) }} in / {{ "{:,}".format(report.llm.output_tokens) }} out tokens{% if report.llm.cost_usd is not none %}, about ${{ "%.3f"|format(report.llm.cost_usd) }}{% endif %}) &middot; {% endif %}
     PagePatrol {{ report.pagepatrol_version }} · {{ report.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ report.duration_s }}s
   </footer>
 {% endblock %}
