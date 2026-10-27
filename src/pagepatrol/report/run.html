@@ -42,6 +42,22 @@
         {% endif %}
         {% if step.note %}<div class="meta">{{ step.note }}</div>{% endif %}
         {% if step.error %}<div class="step-error">{{ step.error }}</div>{% endif %}
+        {% if step.performance %}
+        <div class="perf">
+          <div class="tiles">
+            {% for t in perf_tiles(step.performance) %}
+            <div class="tile {{ t.rating or 'none' }}" title="{{ t.short }}">
+              <span>{{ t.label }}</span>
+              <b>{{ t.value or "not measured" }}</b>
+            </div>
+            {% endfor %}
+          </div>
+          <p class="check">
+            {{ format_bytes(step.performance.transfer_bytes) }} in {{ step.performance.requests }} requests ·
+            {% if step.performance.throttling %}loaded as {{ step.performance.throttling }}{% else %}loaded over this computer's connection{% endif %}
+          </p>
+        </div>
+        {% endif %}
         {% if step.screenshot or step.findings %}
         <div class="step-body">
           {% if step.screenshot %}

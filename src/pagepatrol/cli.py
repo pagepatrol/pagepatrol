@@ -378,6 +378,12 @@ def run(
         "--install/--no-install",
         help="Install the project's missing packages without asking (or never).",
     ),
+    perf: bool = typer.Option(True, "--perf/--no-perf", help="Measure how fast each page loads."),
+    throttle: bool = typer.Option(
+        True,
+        "--throttle/--no-throttle",
+        help="Load pages at phone size like a mid-range phone on 4G would (Chromium only).",
+    ),
     browser: list[str] = typer.Option(
         ["chromium"],
         "--browser",
@@ -427,6 +433,8 @@ def run(
         recordings=home / "recordings.yaml",
         fresh=fresh,
         browsers=_browsers(browser),
+        performance=perf,
+        throttle=throttle,
     )
     plain = any(step.action == "do" for s in scenarios for step in s.steps)
     if plain and llm is not False:
@@ -597,6 +605,14 @@ def _print_run_summary(report, labels: tuple[str, str] = ("PASS", "FAIL")) -> No
             f"{llm.input_tokens:,} in / {llm.output_tokens:,} out tokens, "
             f"{format_cost(llm.cost_usd)}[/dim]"
         )
+    slowest = max(
+        (step for s in report.scenarios for step in s.steps if step.performance),
+        key=lambda step: step.performance.lcp_ms or step.performance.load_ms or 0,
+        default=None,
+    )
+    if slowest:
+        console.print(f"[dim]Slowest page: {slowest.url}[/dim]", soft_wrap=True, highlight=False)
+        console.print("  " + _perf_line(slowest.performance), highlight=False)
     replayed = sum(1 for s in report.scenarios for step in s.steps if step.via == "recording")
     if replayed:
         console.print(f"[dim]Replayed {replayed} recorded step(s) without the AI.[/dim]")
@@ -769,6 +785,12 @@ def explore(
         "--install/--no-install",
         help="Install the project's missing packages without asking (or never).",
     ),
+    perf: bool = typer.Option(True, "--perf/--no-perf", help="Measure how fast each page loads."),
+    throttle: bool = typer.Option(
+        True,
+        "--throttle/--no-throttle",
+        help="Load pages at phone size like a mid-range phone on 4G would (Chromium only).",
+    ),
     browser: list[str] = typer.Option(
         ["chromium"],
         "--browser",
@@ -813,6 +835,8 @@ def explore(
         storage_state=login_state,
         headed=headed,
         browsers=_browsers(browser),
+        performance=perf,
+        throttle=throttle,
     )
     try:
         with contextlib.ExitStack() as stack:

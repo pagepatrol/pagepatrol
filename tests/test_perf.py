@@ -119,3 +119,58 @@ def test_heavy_pages_on_dev_servers_are_only_a_note():
     remote = {f.check: f for f in findings_for(perf, raw, local=False)}
     assert remote["perf/page-weight"].severity == Severity.WARNING
     assert remote["perf/large-file"].severity == Severity.WARNING
+
+
+def run_scenario(tmp_path: Path, text: str, **options):
+    from pagepatrol.runner import RunOptions, run_scenarios
+    from pagepatrol.scenario import load_scenarios
+
+    path = tmp_path / "scenario.yaml"
+    path.write_text(text, encoding="utf-8")
+    base = (FIXTURES / "app" / "index.html").as_uri()
+    options = RunOptions(out_dir=tmp_path / "out", base_url=base, **options)
+    return run_scenarios(load_scenarios(path), options).scenarios[0]
+
+
+CONTACT = """
+name: Contact
+steps:
+  - click: Contact us
+  - fill: { target: Email, value: test@example.com }
+"""
+
+
+def test_scenario_steps_that_load_a_page_are_measured(tmp_path):
+    scenario = run_scenario(tmp_path, CONTACT)
+    goto, click, fill = scenario.steps
+    assert goto.performance is not None and goto.performance.fcp_ms is not None
+    assert click.performance is not None  # Contact us opens another page
+    assert fill.performance is None
+
+
+def test_phone_scenarios_load_like_a_phone(tmp_path):
+    scenario = run_scenario(tmp_path, CONTACT + "viewport: mobile\n")
+    goto, click, _ = scenario.steps
+    assert goto.performance.throttling == PHONE_LABEL
+    # Only opening a page is slowed down; following a link afterwards isn't.
+    assert click.performance.throttling is None
+
+
+def test_layout_shift_shows_up_on_the_step(tmp_path):
+    shift = (FIXTURES / "layout_shift.html").as_uri()
+    scenario = run_scenario(tmp_path, f"name: Shift\nurl: {shift}\nsteps:\n  - expect: Article\n")
+    assert any(f.check == "perf/cls" for f in scenario.steps[0].findings)
+
+
+def test_scenario_performance_can_be_turned_off(tmp_path):
+    scenario = run_scenario(tmp_path, CONTACT, performance=False)
+    assert all(step.performance is None for step in scenario.steps)
+
+
+def test_explore_measures_each_page(tmp_path):
+    from pagepatrol.explore import ExploreOptions, explore
+
+    start = (FIXTURES / "site" / "index.html").as_uri()
+    report = explore(start, ExploreOptions(out_dir=tmp_path, viewport=VIEWPORTS["desktop"]))
+    opened = [page.steps[0] for page in report.scenarios if page.steps[0].status == "passed"]
+    assert opened and all(step.performance is not None for step in opened)

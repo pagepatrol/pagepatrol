@@ -19,6 +19,7 @@ from pagepatrol.agent import replayable_spec, take_snapshot
 from pagepatrol.browsers import DEFAULT_BROWSER, context_options, launch
 from pagepatrol.check import NAVIGATION_TIMEOUT_MS, RuntimeCollector
 from pagepatrol.checks import load_js
+from pagepatrol.checks.perf import PerfProbe
 from pagepatrol.models import RunReport, ScenarioResult, Severity, StepResult, Viewport
 from pagepatrol.runner import (
     ConfirmFn,
@@ -57,6 +58,8 @@ class ExploreOptions:
     storage_state: Path | None = None
     headed: bool = False
     browsers: list[str] = dataclass_field(default_factory=lambda: [DEFAULT_BROWSER])
+    performance: bool = True
+    throttle: bool = True
 
 
 def same_site(url: str, start: str) -> bool:
@@ -85,6 +88,10 @@ class _Explorer:
         self.runtime = RuntimeCollector()
         self.runtime.attach(page)
         self.checks = _PageChecks()
+        self.probe = None
+        if options.performance:
+            phone = options.throttle and options.viewport.width < 1024
+            self.probe = PerfProbe(browser, phone, is_local(start))
         self.queue: deque[str] = deque([start])
         self.seen = {_page_key(start)}
         # Site-wide, so a menu button that's on every page is tried once.
@@ -120,6 +127,9 @@ class _Explorer:
         )
         result.steps.append(step)
         before = len(self.runtime.findings)
+        document = await self.probe.document(self.page) if self.probe else None
+        if self.probe and action == "goto":
+            await self.probe.slow_down()
         t0 = time.perf_counter()
         try:
             outcome = await run()
@@ -133,12 +143,19 @@ class _Explorer:
             step.error = str(exc)
         step.duration_ms = int((time.perf_counter() - t0) * 1000)
         step.url = self.page.url
+        perf_findings = []
+        if self.probe:
+            if step.status == "passed" and await self.probe.document(self.page) != document:
+                step.performance, perf_findings = await self.probe.collect(self.page)
+            await self.probe.speed_up()
 
         shot = shots / f"{step.index:02d}.png"
         with contextlib.suppress(PlaywrightError):
             await self.page.screenshot(path=shot)
             step.screenshot = shot.relative_to(self.options.out_dir).as_posix()
-        step.findings = await self.checks.run(self.page) + self.runtime.findings[before:]
+        step.findings = (
+            await self.checks.run(self.page) + self.runtime.findings[before:] + perf_findings
+        )
         step.findings.sort(key=lambda f: -f.severity.rank)
         return step
 
@@ -313,6 +330,8 @@ async def _explore(start: str, options: ExploreOptions) -> RunReport:
                 )
                 page = await context.new_page()
                 explorer = _Explorer(page, start, options, browser_name)
+                if explorer.probe:
+                    await explorer.probe.attach(page, slow_down=False)
                 pages = 0
                 while explorer.queue and pages < options.max_pages:
                     url = explorer.queue.popleft()

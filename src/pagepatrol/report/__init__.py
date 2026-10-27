@@ -65,4 +65,6 @@ def write_run_report(report: RunReport, out_dir: Path) -> Path:
         totals=_totals(report.all_findings()),
         passed=sum(1 for s in report.scenarios if s.status == "passed"),
         browser_names=NAMES,
+        perf_tiles=tiles,
+        format_bytes=format_bytes,
     )

@@ -19,6 +19,7 @@ from pagepatrol.check import NAVIGATION_TIMEOUT_MS, RuntimeCollector
 from pagepatrol.checks import install_helpers
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
+from pagepatrol.checks.perf import PerfProbe
 from pagepatrol.config import LLMConfig
 from pagepatrol.llm import Client
 from pagepatrol.llm.pricing import estimate_cost, prices_for
@@ -66,6 +67,8 @@ class RunOptions:
     # Ignore saved recordings and let the AI redo plain-language steps.
     fresh: bool = False
     browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
+    performance: bool = True
+    throttle: bool = True
 
 
 def looks_destructive(name: str) -> bool:
@@ -314,9 +317,16 @@ async def _run_scenario(
     runtime = RuntimeCollector()
     checks = _PageChecks()
 
+    probe = None
+    if options.performance:
+        local = is_local(options.base_url or scenario.url or "")
+        probe = PerfProbe(browser_name, options.throttle and viewport.width < 1024, local)
+
     try:
         page = await context.new_page()
         runtime.attach(page)
+        if probe:
+            await probe.attach(page, slow_down=False)
 
         start_url = scenario.url or options.base_url
         steps = list(scenario.steps)
@@ -338,6 +348,9 @@ async def _run_scenario(
                 continue
 
             before = len(runtime.findings)
+            document = await probe.document(page) if probe else None
+            if probe and step.action == "goto":
+                await probe.slow_down()
             t0 = time.perf_counter()
             try:
                 if step.action == "do":
@@ -355,13 +368,20 @@ async def _run_scenario(
                 failed = True
             step_result.duration_ms = int((time.perf_counter() - t0) * 1000)
             step_result.url = page.url
+            perf_findings = []
+            if probe:
+                if not failed and await probe.document(page) != document:
+                    step_result.performance, perf_findings = await probe.collect(page)
+                await probe.speed_up()
 
             shot = shots / f"{i:02d}.png"
             with contextlib.suppress(PlaywrightError):
                 await page.screenshot(path=shot)
                 step_result.screenshot = shot.relative_to(options.out_dir).as_posix()
 
-            step_result.findings = await checks.run(page) + runtime.findings[before:]
+            step_result.findings = (
+                await checks.run(page) + runtime.findings[before:] + perf_findings
+            )
             step_result.findings.sort(key=lambda f: -f.severity.rank)
 
         if failed:

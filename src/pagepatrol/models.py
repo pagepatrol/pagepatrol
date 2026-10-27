@@ -164,6 +164,8 @@ class StepResult(BaseModel):
     actions: list[str] = ModelField(default_factory=list)
     via: str | None = None
     note: str | None = None
+    # Set when the step loaded a new page.
+    performance: Performance | None = None
     findings: list[Finding] = ModelField(default_factory=list)
 
 

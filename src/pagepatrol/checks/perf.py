@@ -35,29 +35,57 @@ MAX_IMAGE_FINDINGS = 10
 
 
 class PerfProbe:
-    """Measures how fast a page loads. Attach before navigating, collect after load."""
+    """Measures how fast pages load. Attach before the first navigation, collect after a load."""
 
     def __init__(self, browser: str, throttle: bool, local: bool):
-        self.throttle = throttle and browser == "chromium"
+        self.can_throttle = throttle and browser == "chromium"
         self.local = local
         self.session: CDPSession | None = None
+        self.throttled = False
 
-    async def attach(self, page: Page) -> None:
+    async def attach(self, page: Page, slow_down: bool = True) -> None:
         await page.add_init_script(load_js("js/perf_observe.js"))
-        if self.throttle:
+        if self.can_throttle:
             self.session = await page.context.new_cdp_session(page)
             await self.session.send("Network.enable")
+            if slow_down:
+                await self.slow_down()
+
+    async def slow_down(self) -> None:
+        if self.session and not self.throttled:
             await self.session.send("Network.emulateNetworkConditions", PHONE_NETWORK)
             await self.session.send("Emulation.setCPUThrottlingRate", {"rate": PHONE_CPU})
+            self.throttled = True
+
+    async def speed_up(self) -> None:
+        # Only loading needs a slow phone; everything after runs at full speed.
+        if not (self.session and self.throttled):
+            return
+        with contextlib.suppress(PlaywrightError):
+            await self.session.send("Emulation.setCPUThrottlingRate", {"rate": 1})
+            await self.session.send(
+                "Network.emulateNetworkConditions",
+                {"offline": False, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1},
+            )
+        self.throttled = False
+
+    @staticmethod
+    async def document(page: Page) -> float | None:
+        """Identifies the loaded document, to tell whether a step loaded a new one."""
+        try:
+            return await page.evaluate("performance.timeOrigin")
+        except PlaywrightError:
+            return None
 
     async def collect(self, page: Page) -> tuple[Performance | None, list[Finding]]:
+        throttling = PHONE_LABEL if self.throttled else None
         try:
             await install_helpers(page)
             raw = await page.evaluate(load_js("js/perf.js"))
         except PlaywrightError:
             return None, []
         finally:
-            await self._stop_throttling()
+            await self.speed_up()
         m = raw["metrics"]
         perf = Performance(
             ttfb_ms=m["ttfb"],
@@ -68,22 +96,9 @@ class PerfProbe:
             cls=m["cls"],
             requests=m["requests"],
             transfer_bytes=m["transfer"],
-            throttling=PHONE_LABEL if self.throttle else None,
+            throttling=throttling,
         )
         return perf, findings_for(perf, raw, self.local)
-
-    async def _stop_throttling(self) -> None:
-        # The rest of the checks don't need a slow phone, only the load did.
-        if not self.session:
-            return
-        with contextlib.suppress(PlaywrightError):
-            await self.session.send("Emulation.setCPUThrottlingRate", {"rate": 1})
-            await self.session.send(
-                "Network.emulateNetworkConditions",
-                {"offline": False, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1},
-            )
-            await self.session.detach()
-        self.session = None
 
 
 def rating(key: str, value: float | None) -> str | None:
@@ -102,6 +117,8 @@ def format_metric(key: str, value: float) -> str:
 def format_bytes(count: int) -> str:
     if count >= 1024 * 1024:
         return f"{count / 1024 / 1024:.1f} MB"
+    if count < 1024:
+        return f"{count} bytes"
     return f"{count / 1024:.0f} KB"
 
 
