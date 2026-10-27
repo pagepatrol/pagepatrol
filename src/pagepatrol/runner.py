@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urldefrag, urljoin
 
 from playwright.async_api import Browser, Page, async_playwright
 from playwright.async_api import Error as PlaywrightError
@@ -26,7 +26,7 @@ from pagepatrol.locate import TargetNotFound, accessible_name, resolve
 from pagepatrol.models import Finding, LLMRun, RunReport, ScenarioResult, StepResult
 from pagepatrol.recordings import Recordings
 from pagepatrol.scenario import Scenario, ScenarioError, Step, parse_step
-from pagepatrol.targets import parse_viewport
+from pagepatrol.targets import is_local, parse_viewport
 
 ACTION_TIMEOUT_MS = 10_000
 EXPECT_TIMEOUT_MS = 5_000
@@ -40,7 +40,6 @@ DESTRUCTIVE = re.compile(
     r"abonelikten çık|hesabı kapat)\b",
     re.IGNORECASE,
 )
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 ConfirmFn = Callable[[str, str], bool]
 
@@ -67,11 +66,6 @@ class RunOptions:
     # Ignore saved recordings and let the AI redo plain-language steps.
     fresh: bool = False
     browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
-
-
-def is_local(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme == "file" or (parsed.hostname or "") in LOCAL_HOSTS
 
 
 def looks_destructive(name: str) -> bool:

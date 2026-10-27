@@ -87,6 +87,12 @@ def check(
         "--depth",
         help="How much of the page the AI looks at, and how hard it thinks.",
     ),
+    perf: bool = typer.Option(True, "--perf/--no-perf", help="Measure how fast the page loads."),
+    throttle: bool = typer.Option(
+        True,
+        "--throttle/--no-throttle",
+        help="Load phone sizes like a mid-range phone on 4G would (Chromium only).",
+    ),
     review_browser: list[str] = typer.Option(
         [],
         "--review-browser",
@@ -122,6 +128,8 @@ def check(
         depth=depth,
         browsers=browsers,
         review_browsers=reviewed,
+        performance=perf,
+        throttle=throttle,
     )
     if llm is not False:
         options.llm, options.llm_config = _llm_client(required=llm is True)
@@ -916,6 +924,21 @@ def install(
     raise typer.Exit(subprocess.call(cmd))
 
 
+def _perf_line(perf) -> str:
+    from pagepatrol.checks.perf import format_bytes, tiles
+
+    style = {"good": "green", "needs-improvement": "yellow", "poor": "red"}
+    parts = [
+        f"{t['short']} [{style[t['rating']]}]{t['value']}[/]"
+        for t in tiles(perf)
+        if t["value"] is not None
+    ]
+    parts.append(f"{format_bytes(perf.transfer_bytes)}, {perf.requests} requests")
+    if perf.throttling:
+        parts.append("as a phone on 4G")
+    return "[dim]" + " · ".join(parts) + "[/dim]"
+
+
 def format_cost(cost: float | None) -> str:
     if cost is None:
         return "cost unknown (set prices with `pagepatrol init`)"
@@ -934,6 +957,8 @@ def _print_summary(report: CheckReport, max_rows: int = 20) -> None:
         label = report.label(result)
         size = f"{vp.width}x{vp.height}"
         console.print(f"[bold]{label:<{width}}[/bold] {size:<10} " + "  ".join(parts))
+        if result.performance:
+            console.print(" " * (width + 12) + _perf_line(result.performance), highlight=False)
 
     console.print(f"[dim]Took {report.duration_s:.0f}s[/dim]")
     if report.llm:

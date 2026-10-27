@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixture</title>
+<style>body { font: 16px/1.5 sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }</style>
+</head>
+<body>
+<main>
+<h1>Busy page</h1>
+<p>Right after it shows up, a script keeps the browser busy for most of a second.</p>
+</main>
+<script>
+setTimeout(() => {
+  const end = performance.now() + 900;
+  while (performance.now() < end);
+}, 100);
+</script>
+</body>
+</html>

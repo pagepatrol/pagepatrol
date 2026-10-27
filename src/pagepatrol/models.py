@@ -48,9 +48,25 @@ class Viewport(BaseModel):
     height: int
 
 
+class Performance(BaseModel):
+    # Times in milliseconds from the start of navigation; None when the
+    # browser can't measure it.
+    ttfb_ms: float | None = None
+    fcp_ms: float | None = None
+    lcp_ms: float | None = None
+    load_ms: float | None = None
+    tbt_ms: float | None = None
+    cls: float | None = None
+    requests: int = 0
+    transfer_bytes: int = 0
+    # How the load was slowed down to resemble a phone, or None.
+    throttling: str | None = None
+
+
 class ViewportResult(BaseModel):
     viewport: Viewport
     browser: str = "chromium"
+    performance: Performance | None = None
     screenshot: str | None = None
     annotated_screenshot: str | None = None
     findings: list[Finding] = ModelField(default_factory=list)

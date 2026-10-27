@@ -16,6 +16,7 @@ from pagepatrol.checks import install_helpers, load_js
 from pagepatrol.checks.axe import run_axe
 from pagepatrol.checks.layout import run_layout_checks
 from pagepatrol.checks.links import check_links
+from pagepatrol.checks.perf import PerfProbe
 from pagepatrol.config import LLMConfig
 from pagepatrol.llm import Client
 from pagepatrol.llm.pricing import estimate_cost, prices_for
@@ -24,12 +25,13 @@ from pagepatrol.models import (
     ConsoleMessage,
     Finding,
     LLMRun,
+    Performance,
     Severity,
     Viewport,
     ViewportResult,
 )
 from pagepatrol.review import DEPTHS, Depth, Tile, review_viewport
-from pagepatrol.targets import resolve_target
+from pagepatrol.targets import is_local, resolve_target
 
 NAVIGATION_TIMEOUT_MS = 30_000
 NETWORK_IDLE_TIMEOUT_MS = 5_000
@@ -53,6 +55,9 @@ class CheckOptions:
     browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
     # Where the AI looks at the screenshots. Empty means the first browser only.
     review_browsers: list[str] = field(default_factory=list)
+    performance: bool = True
+    # Load phone-sized pages the way a mid-range phone on 4G would (Chromium only).
+    throttle: bool = True
 
 
 @dataclass
@@ -150,9 +155,13 @@ async def _scroll_through(page: Page) -> None:
     await page.wait_for_timeout(300)
 
 
-async def _open(context: BrowserContext, url: str, runtime: RuntimeCollector) -> Page:
+async def _open(
+    context: BrowserContext, url: str, runtime: RuntimeCollector, probe: PerfProbe | None = None
+) -> tuple[Page, Performance | None, list[Finding]]:
     page = await context.new_page()
     runtime.attach(page)
+    if probe:
+        await probe.attach(page)
     try:
         response = await page.goto(url, wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
     except PlaywrightError as exc:
@@ -162,8 +171,10 @@ async def _open(context: BrowserContext, url: str, runtime: RuntimeCollector) ->
     # Pages with polling or analytics never go idle; that's fine.
     with contextlib.suppress(PlaywrightTimeout):
         await page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
+    # Measure before scrolling: scrolling loads more and moves things around.
+    perf, perf_findings = await probe.collect(page) if probe else (None, [])
     await _scroll_through(page)
-    return page
+    return page, perf, perf_findings
 
 
 async def _capture_tiles(page: Page, viewport: Viewport, max_tiles: int) -> list[Tile]:
@@ -210,9 +221,17 @@ async def _check_viewport(
     )
     try:
         runtime = RuntimeCollector()
-        page = await _open(context, url, runtime)
+        probe = None
+        if options.performance:
+            probe = PerfProbe(
+                browser_name, throttle=options.throttle and mobile, local=is_local(url)
+            )
+        page, perf, perf_findings = await _open(context, url, runtime, probe)
         result = ViewportResult(
-            viewport=viewport, browser=browser_name, page_title=await page.title()
+            viewport=viewport,
+            browser=browser_name,
+            page_title=await page.title(),
+            performance=perf,
         )
 
         shots = options.out_dir / "screenshots"
@@ -229,7 +248,7 @@ async def _check_viewport(
 
         await install_helpers(page)
         layout = await run_layout_checks(page)
-        findings = layout.findings + await run_axe(page)
+        findings = layout.findings + await run_axe(page) + perf_findings
 
         if mobile and not await page.locator("meta[name=viewport]").count():
             findings.append(

@@ -40,6 +40,22 @@
       <div>
         {% if r.review_summary %}<p class="summary"><span class="ai">AI</span> {{ r.review_summary }}</p>{% endif %}
         {% if r.review_error %}<p class="summary failed">AI review failed: {{ r.review_error }}</p>{% endif %}
+        {% if r.performance %}
+        <div class="perf">
+          <div class="tiles">
+            {% for t in perf_tiles(r.performance) %}
+            <div class="tile {{ t.rating or 'none' }}" title="{{ t.short }}">
+              <span>{{ t.label }}</span>
+              <b>{{ t.value or "not measured" }}</b>
+            </div>
+            {% endfor %}
+          </div>
+          <p class="check">
+            {{ format_bytes(r.performance.transfer_bytes) }} in {{ r.performance.requests }} requests ·
+            {% if r.performance.throttling %}loaded as {{ r.performance.throttling }}{% else %}loaded over this computer's connection{% endif %}
+          </p>
+        </div>
+        {% endif %}
         {% if r.findings %}
         <div class="findings">
           {% for g in group_by_check(r.findings) %}

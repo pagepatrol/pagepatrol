@@ -5,6 +5,7 @@ from pathlib import Path
 from jinja2 import Environment, FunctionLoader, select_autoescape
 
 from pagepatrol.browsers import NAMES
+from pagepatrol.checks.perf import format_bytes, tiles
 from pagepatrol.models import CheckReport, RunReport, Severity, group_by_check
 
 
@@ -50,6 +51,8 @@ def write_report(report: CheckReport, out_dir: Path) -> Path:
         report.model_dump_json(indent=2),
         report=report,
         totals=_totals(report.all_findings()),
+        perf_tiles=tiles,
+        format_bytes=format_bytes,
     )
 
 

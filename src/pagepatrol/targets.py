@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pagepatrol.models import Viewport
 
@@ -8,6 +9,8 @@ VIEWPORTS = {
     "tablet": Viewport(name="tablet", width=768, height=1024),
     "desktop": Viewport(name="desktop", width=1280, height=800),
 }
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 _SIZE = re.compile(r"^(\d{2,5})x(\d{2,5})$")
 
@@ -38,6 +41,11 @@ def resolve_target(target: str) -> str:
         return f"{scheme}://{target}"
 
     raise TargetError(f"Can't find {target!r}. Expected a URL, an HTML file or a folder.")
+
+
+def is_local(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "file" or (parsed.hostname or "") in LOCAL_HOSTS
 
 
 def parse_viewport(value: str) -> Viewport:
