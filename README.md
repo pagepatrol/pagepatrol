@@ -129,6 +129,7 @@ steps:
 ```
 
 ```sh
+pagepatrol run ./my-app                       # starts the app, runs its scenarios, stops it
 pagepatrol run --base-url localhost:3000      # runs everything in .pagepatrol/scenarios
 pagepatrol run checkout.yaml -b https://staging.example.com --open
 ```
@@ -148,6 +149,21 @@ values that contain `?`, `:` or `#`, as usual in YAML.
 | `press` | `press: Enter` or `press: { key: Enter, target: Search }` |
 | `wait` | `wait: 500` or `wait: { text: Loaded }` |
 | `expect` | `expect: Saved`, `expect: { url: /thanks }`, `{ title: ... }`, `{ visible: ... }`, `{ hidden: ... }`, `{ no_text: Error }` |
+
+A file can hold one scenario or a list under `scenarios:`, and each scenario
+can set `viewport: mobile`. A failed step stops its scenario; the rest are
+marked skipped. `run` exits with code 1 if any scenario failed.
+
+On sites other than localhost and local files, PagePatrol asks before
+clicking anything that looks permanent, such as Delete, Pay or Place order.
+Pass `--yes` to skip the question. Without a terminal to ask in (CI), it
+stops the scenario instead.
+
+For pages behind a login, run `pagepatrol login https://example.com/login`
+once. A browser opens, you log in, and the session is saved to
+`.pagepatrol/auth.json`, which `run` then uses. That file holds your login
+cookies, so add it to `.gitignore`. The scenarios next to it are worth
+committing.
 
 ### Plain-language steps
 
@@ -186,9 +202,9 @@ It works with any language or framework. It reads the source files (respecting
 `.gitignore`), tells you how many files it will send and roughly what that
 costs, and asks before sending. Files like `.env`, keys and credentials are
 never sent, and values that look like passwords or tokens are masked. It
-then lists the scenarios it suggests; you pick which ones to save to
-`.pagepatrol/scenarios/`. They use plain-language steps, so the first
-`pagepatrol run` lets the AI do them and records the result.
+then lists the scenarios it suggests; you pick which ones to save to the
+project's `.pagepatrol/scenarios/`. They use plain-language steps, so the
+first `pagepatrol run ./my-app` lets the AI do them and records the result.
 
 On the demo app in this repo, planning cost about $0.01 and the first run of
 the five planned scenarios about $0.08; runs after that replay for free.
@@ -197,6 +213,7 @@ the five planned scenarios about $0.08; runs after that replay for free.
 
 ```sh
 pagepatrol explore localhost:3000
+pagepatrol explore ./my-app        # starts the dev server first, see below
 ```
 
 No AI and nothing to write. PagePatrol follows the links on the site, and on
@@ -211,19 +228,34 @@ Pressing buttons and sending forms happens only on localhost and local
 files unless you pass `--interact`. On other sites it just follows links.
 `--max-pages` (default 15) keeps the walk short.
 
-A file can hold one scenario or a list under `scenarios:`, and each scenario
-can set `viewport: mobile`. A failed step stops its scenario; the rest are
-marked skipped. `run` exits with code 1 if any scenario failed.
+### Starting your app
 
-On sites other than localhost and local files, PagePatrol asks before
-clicking anything that looks permanent, such as Delete, Pay or Place order.
-Pass `--yes` to skip the question. Without a terminal to ask in (CI), it
-stops the scenario instead.
+Point `run` or `explore` at a project folder and PagePatrol starts its dev
+server, waits until it answers, tests it and stops it again, including any
+processes the server started. It recognizes:
 
-For pages behind a login, run `pagepatrol login https://example.com/login`
-once. A browser opens, you log in, and the session is saved to
-`.pagepatrol/auth.json`, which `run` then uses. That file holds your login
-cookies, so keep `.pagepatrol/` out of version control.
+| Project | Started with |
+|---|---|
+| `package.json` with a `dev`, `start` or `serve` script | `npm run dev` (or pnpm, yarn, bun, going by the lockfile) |
+| Django (`manage.py`) | `manage.py runserver` |
+| FastAPI or Flask | `uvicorn` or `flask run`, from the project's `.venv` if it has one |
+| ASP.NET Core (`.csproj` using the Web SDK) | `dotnet run` |
+| A folder with `index.html` | a small built-in file server |
+
+Dev servers that print their address (Vite, Next.js and most others) are
+found that way; for the rest PagePatrol picks the port. Dependencies have to
+be installed already; it won't run `npm install` for you.
+
+If it guesses wrong, tell it once:
+
+```sh
+pagepatrol run ./my-app --start "npm run dev:web" --base-url localhost:8080
+```
+
+The command and address are saved to `.pagepatrol/config.toml` in the
+project, so after that `pagepatrol run ./my-app` is enough. Scenarios,
+recordings, logins and reports live in that project's `.pagepatrol/` folder
+too.
 
 ## What it checks
 
