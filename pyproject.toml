@@ -1,6 +1,6 @@
 [project]
 name = "pagepatrol"
-version = "0.3.0"
+version = "0.4.0"
 description = "Open-source, local-first QA agent for web pages"
 readme = "README.md"
 license = "MIT"
