@@ -51,6 +51,8 @@ class CheckOptions:
     llm_config: LLMConfig | None = None
     depth: Depth = Depth.BALANCED
     browsers: list[str] = field(default_factory=lambda: [DEFAULT_BROWSER])
+    # Where the AI looks at the screenshots. Empty means the first browser only.
+    review_browsers: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -283,10 +285,8 @@ async def _run(target: str, url: str, options: CheckOptions) -> CheckReport:
             try:
                 for viewport in options.viewports:
                     # Links answer the same whatever the browser, so check them once.
-                    # The AI review also looks at the first browser only: pages look
-                    # nearly the same in each, and reviewing all would multiply the cost.
                     with_links = options.check_links and not results
-                    review = browser_name == options.browsers[0]
+                    review = browser_name in (options.review_browsers or options.browsers[:1])
                     results.append(
                         await _check_viewport(
                             browser, browser_name, url, viewport, options, with_links, review

@@ -34,14 +34,31 @@ class FakeClient:
         return ["fake-model"]
 
 
-def run(name: str, tmp_path: Path, client: FakeClient):
+def run(name: str, tmp_path: Path, client: FakeClient, **options):
     options = CheckOptions(
         viewports=[VIEWPORTS["desktop"]],
         out_dir=tmp_path,
         llm=client,
         llm_config=LLMConfig("anthropic", "claude-sonnet-5-5"),
+        **options,
     )
     return run_check(str(FIXTURES / name), options)
+
+
+@pytest.mark.parametrize(
+    ("review_browsers", "reviewed"),
+    [
+        ([], ["firefox"]),
+        (["webkit"], ["webkit"]),
+        (["firefox", "webkit"], ["firefox", "webkit"]),
+    ],
+)
+def test_review_browsers(tmp_path, review_browsers, reviewed):
+    client = FakeClient()
+    browsers = ["firefox", "webkit"]
+    report = run("clean.html", tmp_path, client, browsers=browsers, review_browsers=review_browsers)
+    assert [r.browser for r in report.results if r.review_summary] == reviewed
+    assert client.usage.calls == len(reviewed)
 
 
 def test_review_downgrades_intentional_findings_and_adds_new_ones(tmp_path):

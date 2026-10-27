@@ -87,6 +87,12 @@ def check(
         "--depth",
         help="How much of the page the AI looks at, and how hard it thinks.",
     ),
+    review_browser: list[str] = typer.Option(
+        [],
+        "--review-browser",
+        help="Browsers the AI review looks at: names or all. Default: the first one only, "
+        "since each one adds to the cost.",
+    ),
     browser: list[str] = typer.Option(
         ["chromium"],
         "--browser",
@@ -103,6 +109,9 @@ def check(
     except TargetError as exc:
         raise typer.BadParameter(str(exc), param_hint="--viewport") from exc
     browsers = _browsers(browser)
+    reviewed = _browsers(review_browser) if review_browser else []
+    # Reviewing in a browser means checking in it too.
+    browsers += [b for b in reviewed if b not in browsers]
 
     out_dir = out or Path(".pagepatrol") / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
     options = CheckOptions(
@@ -112,6 +121,7 @@ def check(
         external_links=external_links,
         depth=depth,
         browsers=browsers,
+        review_browsers=reviewed,
     )
     if llm is not False:
         options.llm, options.llm_config = _llm_client(required=llm is True)
@@ -125,6 +135,11 @@ def check(
 
     report_path = write_report(report, out_dir)
     _print_summary(report)
+    if report.llm and len(browsers) > 1 and not reviewed:
+        console.print(
+            f"[dim]The AI review looked at {browsers[0]} only. "
+            "Add --review-browser all to have it look at every browser.[/dim]"
+        )
     console.print(f"\nReport: [bold]{report_path.resolve()}[/bold]", soft_wrap=True)
     if open_report:
         webbrowser.open(report_path.resolve().as_uri())

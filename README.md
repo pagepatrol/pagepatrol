@@ -45,9 +45,13 @@ pagepatrol run ./my-app --browser all
 ```
 
 The report shows each browser side by side. Plain-language steps are worked
-out by the AI once, in the first browser, and replayed in the others. The AI
-review of screenshots also looks at the first browser only, so adding
-browsers doesn't multiply the cost. Firefox can't pretend to be a phone
+out by the AI once, in the first browser, and replayed in the others, so
+extra browsers cost nothing there.
+
+Pages don't look exactly alike in every browser, but each screenshot the AI
+reviews adds to the cost, so by default it looks at the first browser only.
+Pick others with `--review-browser firefox` (repeat it for more) or
+`--review-browser all`. Firefox can't pretend to be a phone
 browser, so at phone size it shows the page in a narrow desktop window;
 layout problems still show up the same way.
 
