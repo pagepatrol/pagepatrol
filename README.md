@@ -191,7 +191,7 @@ then lists the scenarios it suggests; you pick which ones to save to
 `pagepatrol run` lets the AI do them and records the result.
 
 On the demo app in this repo, planning cost about $0.01 and the first run of
-the five planned scenarios about $0.12; runs after that replay for free.
+the five planned scenarios about $0.08; runs after that replay for free.
 
 A file can hold one scenario or a list under `scenarios:`, and each scenario
 can set `viewport: mobile`. A failed step stops its scenario; the rest are

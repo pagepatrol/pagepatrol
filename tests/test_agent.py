@@ -30,7 +30,7 @@ class ScriptedAI:
         answer = self.decide(request.text, len(self.requests))
         if isinstance(answer, Exception):
             raise answer
-        return {"element": 0, "value": "", **answer}
+        return {"element": 0, "value": "", "finished": False, "proof": "", **answer}
 
     async def list_models(self):
         return ["fake-model"]
@@ -221,3 +221,52 @@ def test_report_shows_ai_steps_and_cost(tmp_path):
     html = write_run_report(report, tmp_path / "out").read_text(encoding="utf-8")
     assert "AI steps by fake-model" in html
     assert "Added Green cup to your cart" in html
+
+
+def test_last_action_can_finish_the_goal(tmp_path):
+    def decide(text, turn):
+        return {
+            "action": "click",
+            "element": element(text, "Add to cart", "Green cup"),
+            "finished": True,
+            "proof": "Added Green cup to your cart",
+        }
+
+    ai = ScriptedAI(decide)
+    step = run(tmp_path, CHEAPEST, ai).scenarios[0].steps[1]
+    assert step.status == "passed", step.error
+    assert len(ai.requests) == 1
+    assert step.actions[-1] == "Expect text 'Added Green cup to your cart'"
+
+
+def test_wrong_proof_means_another_turn(tmp_path):
+    def decide(text, turn):
+        if turn == 1:
+            return {
+                "action": "click",
+                "element": element(text, "Add to cart", "Green cup"),
+                "finished": True,
+                "proof": "Order placed",
+            }
+        return {"action": "done", "value": "Added Green cup to your cart"}
+
+    ai = ScriptedAI(decide)
+    step = run(tmp_path, CHEAPEST, ai).scenarios[0].steps[1]
+    assert step.status == "passed", step.error
+    assert len(ai.requests) == 2
+    assert "'Order placed' to show up" in ai.requests[1].text
+
+
+def test_a_click_needs_proof_to_finish_early(tmp_path):
+    def decide(text, turn):
+        if turn == 1:
+            return {
+                "action": "click",
+                "element": element(text, "Add to cart", "Green cup"),
+                "finished": True,
+            }
+        return {"action": "done", "value": ""}
+
+    ai = ScriptedAI(decide)
+    run(tmp_path, CHEAPEST, ai)
+    assert len(ai.requests) == 2
