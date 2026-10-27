@@ -1,3 +1,4 @@
+import contextlib
 import os
 import subprocess
 import sys
@@ -427,6 +428,124 @@ def _print_run_summary(report) -> None:
     replayed = sum(1 for s in report.scenarios for step in s.steps if step.via == "recording")
     if replayed:
         console.print(f"[dim]Replayed {replayed} recorded step(s) without the AI.[/dim]")
+
+
+@app.command()
+def plan(
+    project: Path = typer.Argument(Path("."), help="The project folder to read."),
+    out: Path = typer.Option(
+        Path(".pagepatrol") / "scenarios", "--out", "-o", help="Where to save the scenarios."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Don't ask before sending code or saving scenarios."
+    ),
+) -> None:
+    """Read a project's code and suggest scenarios to test. Needs an AI model."""
+    import asyncio
+
+    from pagepatrol.llm import LLMError
+    from pagepatrol.llm.pricing import estimate_cost, prices_for
+    from pagepatrol.planner import (
+        EXPECTED_OUTPUT_TOKENS,
+        collect_sources,
+        estimate_input_tokens,
+        make_plan,
+        write_scenarios,
+    )
+    from pagepatrol.scenario import ScenarioError, load_scenarios
+
+    if not project.is_dir():
+        console.print(f"[red]{project} is not a folder.[/red]")
+        raise typer.Exit(2)
+    client, config = _llm_client(required=True)
+
+    with console.status("Reading the project..."):
+        sources = collect_sources(project)
+    if not sources.files:
+        console.print("[red]Found no web source files to read in this folder.[/red]")
+        raise typer.Exit(2)
+
+    tokens = estimate_input_tokens(sources)
+    cost = estimate_cost(prices_for(config), tokens, EXPECTED_OUTPUT_TOKENS)
+    console.print(
+        f"Will send {len(sources.files)} file(s), about {tokens:,} tokens, "
+        f"to {config.model} on {config.provider}. {format_cost(cost).capitalize()}."
+    )
+    if sources.left_out:
+        console.print(f"[dim]{sources.left_out} more file(s) didn't fit and are left out.[/dim]")
+    if sources.secret_files:
+        console.print(f"[dim]Skipped {sources.secret_files} file(s) that may hold secrets.[/dim]")
+    if sources.redacted:
+        console.print(f"[dim]Masked {sources.redacted} value(s) that look like secrets.[/dim]")
+    if not yes and not typer.confirm("Send?", default=True):
+        raise typer.Exit(1)
+
+    existing: list[str] = []
+    if out.is_dir():
+        with contextlib.suppress(ScenarioError):
+            existing = [s.name for s in load_scenarios(out)]
+
+    try:
+        with console.status(f"{config.model} is reading the code..."):
+            result = asyncio.run(make_plan(client, sources, existing))
+    except LLMError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    usage = client.usage
+    spent = estimate_cost(prices_for(config), usage.input_tokens, usage.output_tokens)
+    console.print(
+        f"[dim]{usage.input_tokens:,} in / {usage.output_tokens:,} out tokens, "
+        f"{format_cost(spent)}[/dim]"
+    )
+    for problem in result.dropped:
+        console.print(f"[yellow]Left out an invalid scenario: {problem}[/yellow]")
+    if not result.scenarios:
+        console.print("No scenarios suggested." + (f" {result.notes}" if result.notes else ""))
+        raise typer.Exit(1)
+
+    for i, scenario in enumerate(result.scenarios, 1):
+        login_note = " [yellow](needs login)[/yellow]" if scenario.needs_login else ""
+        console.print(f"\n[bold]{i}. {scenario.name}[/bold]{login_note}  [dim]{scenario.url}[/dim]")
+        if scenario.why:
+            console.print(f"   [dim]{scenario.why}[/dim]", soft_wrap=True)
+        for step in scenario.steps:
+            text = step if isinstance(step, str) else " ".join(f"{k}: {v}" for k, v in step.items())
+            console.print(f"   - {text}", soft_wrap=True)
+    if result.notes:
+        console.print(f"\n[dim]{result.notes}[/dim]", soft_wrap=True)
+
+    chosen = result.scenarios
+    if not yes:
+        answer = (
+            typer.prompt("\nSave which? (all, none, or numbers like 1,3)", default="all")
+            .strip()
+            .lower()
+        )
+        chosen = _pick(answer, result.scenarios)
+    if not chosen:
+        console.print("Nothing saved.")
+        return
+
+    for path in write_scenarios(chosen, out):
+        console.print(f"Saved {path}")
+    console.print(
+        "\nRun them with: [bold]pagepatrol run --base-url <your site>[/bold]\n"
+        "[dim]The AI does the plain-language steps the first time and records them; "
+        "later runs replay without it.[/dim]"
+    )
+
+
+def _pick(answer: str, items: list) -> list:
+    if answer in ("", "all", "a", "y", "yes"):
+        return items
+    if answer in ("none", "n", "no"):
+        return []
+    picked = []
+    for part in answer.replace(" ", ",").split(","):
+        if part.isdigit() and 1 <= int(part) <= len(items) and items[int(part) - 1] not in picked:
+            picked.append(items[int(part) - 1])
+    return picked
 
 
 @app.command()
