@@ -193,6 +193,24 @@ then lists the scenarios it suggests; you pick which ones to save to
 On the demo app in this repo, planning cost about $0.01 and the first run of
 the five planned scenarios about $0.08; runs after that replay for free.
 
+### Exploring without scenarios
+
+```sh
+pagepatrol explore localhost:3000
+```
+
+No AI and nothing to write. PagePatrol follows the links on the site, and on
+each page presses the buttons and fills in the forms with test data
+(`test@example.com` and the like), running the usual checks after every
+action. A button that throws a JavaScript error or a form that breaks on
+submit shows up as a finding on the action that caused it. It stays on the
+same site, never follows logout links, and never presses anything that looks
+permanent, like Delete or Pay.
+
+Pressing buttons and sending forms happens only on localhost and local
+files unless you pass `--interact`. On other sites it just follows links.
+`--max-pages` (default 15) keeps the walk short.
+
 A file can hold one scenario or a list under `scenarios:`, and each scenario
 can set `viewport: mobile`. A failed step stops its scenario; the rest are
 marked skipped. `run` exits with code 1 if any scenario failed.
