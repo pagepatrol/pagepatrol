@@ -243,8 +243,15 @@ processes the server started. It recognizes:
 | A folder with `index.html` | a small built-in file server |
 
 Dev servers that print their address (Vite, Next.js and most others) are
-found that way; for the rest PagePatrol picks the port. Dependencies have to
-be installed already; it won't run `npm install` for you.
+found that way; for the rest PagePatrol picks the port.
+
+If the project's packages aren't installed yet, PagePatrol shows what it
+would run (`npm ci`, `uv sync`, or a fresh `.venv` with
+`pip install -r requirements.txt`) and asks first, since installing runs
+code from those packages. Say no and it prints the commands so you can run
+them yourself. `--install` skips the question, `--no-install` never installs.
+Node.js and the .NET SDK themselves aren't installed for you; it tells you
+where to get them.
 
 If it guesses wrong, tell it once:
 
