@@ -24,7 +24,6 @@ jobs:
             exit 1
           fi
 
-      - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest
+      # Tests already ran on every OS and browser in CI before the tag.
       - run: uv build
       - run: uv publish --trusted-publishing always
